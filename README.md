@@ -43,6 +43,3 @@ The five courses can be replayed individually. Each keeps a best time and a sepa
 
 The game supports windowed, fullscreen, and borderless modes, with resolutions up to 2560 × 1440. Parallax makes distant scenery move more slowly than the playable course to give the tower depth; it can be disabled in Settings.
 
-## Assets
-
-The game art and audio are included in [`art/`](art/) and [`audio/`](audio/). The audio synthesis scripts are in [`tools/`](tools/). The Alegreya typeface is by Huerta Tipografica and is distributed under the SIL Open Font License; its license is included at [`art/Alegreya-OFL.txt`](art/Alegreya-OFL.txt).
