@@ -59,8 +59,9 @@ After importing the project, run these with Godot from the project directory:
 godot --headless --path . --script res://tools/test_all.gd
 godot --headless --path . --script res://tools/test_timing.gd
 godot --headless --path . --script res://tools/test_hazard_art.gd
+godot --headless --path . --script res://tools/test_ghost.gd
 godot --headless --path . --script res://tools/route_bot.gd
 ```
 
-The test harness disables save loading and writing, so it cannot overwrite personal records or settings. `test_all.gd` covers controls, collisions, settings, retries, and story transitions. `test_timing.gd` checks pulse reach, expiry, echo timing, and cosmetic-only character poses. `test_hazard_art.gd` validates every spike and pipe mesh through a full steam cycle, including high contrast. `route_bot.gd` replays recorded inputs from spawn to exit, collecting every note without deaths on all five courses. It also tests mistimed ringing against the same movement inputs.
+The test harness disables save loading and writing, so it cannot overwrite personal records or settings. `test_all.gd` covers controls, collisions, settings, retries, and story transitions. `test_timing.gd` checks pulse reach, expiry, echo timing, and cosmetic-only character poses. `test_hazard_art.gd` validates every spike and pipe mesh through a full steam cycle, including high contrast. `test_ghost.gd` checks that the personal-best ghost replays a run frame for frame and that older saved ghosts still play smoothly. `route_bot.gd` replays recorded inputs from spawn to exit, collecting every note without deaths on all five courses. It also tests mistimed ringing against the same movement inputs.
 

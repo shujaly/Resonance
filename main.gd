@@ -11,6 +11,10 @@ const BELL_REACH = 340.0
 const ECHO_REACH = 520.0
 const WAVE_SPEED = 860.0
 const ECHO_DELAY = 0.62
+const GHOST_STEP = 1.0 / 60.0
+const GHOST_FIELDS = 14
+const GHOST_LIMIT = 10800
+const LEGACY_GHOST_STEP = 0.06
 const SAVE_PATH = "user://one_more_bell_resonance.cfg"
 const ACTIONS = ["move_left", "move_right", "jump", "ring"]
 const ACTION_NAMES = ["Move left", "Move right", "Jump", "Ring bell"]
@@ -57,8 +61,9 @@ var shake = 0.0
 var deaths = 0
 var result_medal = ""
 var result_comparison = []
-var ghost_samples = []
-var ghost_tick = 0.0
+var ghost_samples = PackedFloat32Array()
+var ghost_frames = PackedFloat32Array()
+var ghost_step = GHOST_STEP
 var records = {}
 var completed = [false, false, false, false, false]
 var config = ConfigFile.new()
@@ -192,7 +197,7 @@ func start_level(i):
 	relay_ready.fill(0.0)
 	notes_taken = [false, false, false]
 	waves.clear(); delayed_waves.clear(); particles.clear()
-	run_time = 0.0; world_time = 0.0; ghost_tick = 0.0
+	run_time = 0.0; world_time = 0.0
 	velocity = Vector2.ZERO; ring_cooldown = 0.0; reject_anim = 0.0; ring_anim = 0.0; invulnerable = 0.0
 	grounded = false; coyote = 0.0; jump_buffer = 0.0; jump_held = false
 	reset_character_motion()
@@ -202,6 +207,8 @@ func start_level(i):
 	player = level.spawn
 	facing = 1.0
 	camera = camera_target()
+	prepare_ghost()
+	record_ghost_frame()
 	state = "play"
 	clear_ui()
 	apply_settings()
@@ -417,14 +424,11 @@ func update_game(delta):
 	update_waves(delta)
 	if update_hazards(): return
 	update_character_motion(delta)
+	while ghost_samples.size() < GHOST_LIMIT * GHOST_FIELDS and run_time + 0.0001 >= ghost_samples.size() / float(GHOST_FIELDS) * GHOST_STEP:
+		record_ghost_frame()
 	update_particles(delta)
 	if player.distance_to(level.finish) < 58: finish_level()
 	camera = camera.lerp(camera_target(), min(1.0, delta * 5.0))
-	ghost_tick += delta
-	if ghost_tick >= 0.06:
-		ghost_tick -= 0.06
-		ghost_samples.append(player)
-	if ghost_samples.size() > 8000: ghost_samples.pop_front()
 	if music_high:
 		var fraction = clamp(player.x / level.length, 0.0, 1.0)
 		music_high.volume_db = linear_to_db(max(0.001, float(settings.music) * (0.18 + 0.65 * fraction)))
@@ -463,6 +467,71 @@ func update_waves(delta):
 						delayed_waves.append({"origin": level.echoes[i], "delay": ECHO_DELAY, "relay": i})
 						spawn_particles(level.echoes[i], Color("c79bff"), 8)
 		if wave.radius >= wave.reach: waves.erase(wave)
+
+func record_ghost_frame():
+	if ghost_samples.size() >= GHOST_LIMIT * GHOST_FIELDS: return
+	ghost_samples.append_array(PackedFloat32Array([player.x, player.y, velocity.x, velocity.y, facing, 1.0 if grounded else 0.0, stride, land_anim * land_weight, ring_anim, reject_anim, body_lean, scarf_motion, takeoff_anim, collect_anim]))
+
+func prepare_ghost():
+	ghost_step = GHOST_STEP
+	ghost_frames = PackedFloat32Array()
+	var data = get_record(level_index).ghost
+	if data is PackedFloat32Array:
+		ghost_frames = data
+	elif data is Array and data.size() > 1 and data[0] is Vector2:
+		ghost_step = LEGACY_GHOST_STEP
+		ghost_frames = frames_from_positions([level.spawn] + data)
+
+func frames_from_positions(points):
+	var frames = PackedFloat32Array()
+	var h = LEGACY_GHOST_STEP
+	var n = points.size()
+	var face = 1.0
+	var stride_sum = 0.0
+	var lean = 0.0
+	var scarf = 0.0
+	var landing = 0.0
+	var weight = 0.0
+	var takeoff = 0.0
+	var fall_speed = 0.0
+	var was_grounded = true
+	for k in range(n):
+		var p = points[k]
+		var prev = points[max(0,k-1)]
+		var next = points[min(n-1,k+1)]
+		var v = (next-prev)/(h*float(max(1,min(n-1,k+1)-max(0,k-1))))
+		var on_ground = abs(p.y-prev.y) < 0.5 and abs(next.y-p.y) < 0.5
+		if on_ground: v.y = 0.0
+		if v.x > 25.0: face = 1.0
+		elif v.x < -25.0: face = -1.0
+		landing = max(0.0, landing-h)
+		takeoff = max(0.0, takeoff-h)
+		if on_ground and not was_grounded:
+			landing = 0.22
+			weight = clamp(fall_speed/650.0,0.3,1.0)
+		elif was_grounded and not on_ground and v.y < 0.0:
+			takeoff = 0.18
+		if on_ground: stride_sum += abs(v.x)*h/13.5
+		else: fall_speed = v.y
+		lean = move_toward(lean, clamp(v.x/290.0,-1.0,1.0)*2.8, h*22.0)
+		scarf = lerp(scarf, clamp(-v.y/100.0,-5.0,7.0), 1.0-exp(-h*9.0))
+		frames.append_array(PackedFloat32Array([p.x, p.y, v.x, v.y, face, 1.0 if on_ground else 0.0, stride_sum, landing*weight, 0.0, 0.0, lean, scarf, takeoff, 0.0]))
+		was_grounded = on_ground
+	return frames
+
+func ghost_state(time):
+	var count = int(ghost_frames.size() / float(GHOST_FIELDS))
+	if count < 2 or time < 0.0: return null
+	var f = time / ghost_step
+	if f > count - 1: return null
+	var i = mini(int(f), count - 2)
+	var t = f - i
+	var a = i * GHOST_FIELDS
+	var b = a + GHOST_FIELDS
+	var s = []
+	for k in range(GHOST_FIELDS): s.append(lerpf(ghost_frames[a+k], ghost_frames[b+k], t))
+	var near = a if t < 0.5 else b
+	return {"pos": Vector2(s[0],s[1]), "velocity": Vector2(s[2],s[3]), "facing": ghost_frames[near+4], "grounded": ghost_frames[near+5] > 0.5, "stride": s[6], "landing": s[7], "ring": s[8], "reject": s[9], "lean": s[10], "scarf": s[11], "takeoff": s[12], "delight": s[13]}
 
 func hazard_pos(hazard):
 	var angle = sin(run_time * 1.85 + hazard.phase) * atan(hazard.span / 145.0)
@@ -523,7 +592,6 @@ func respawn():
 	section_times.clear()
 	notes_taken = [false, false, false]
 	ghost_samples.clear()
-	ghost_tick = 0.0
 	velocity = Vector2.ZERO
 	grounded = false; coyote = 0.0; jump_buffer = 0.0
 	jump_held = false
@@ -538,6 +606,7 @@ func respawn():
 		if platform.kind == "glass": platform.until = 0.0
 	waves.clear(); delayed_waves.clear()
 	camera = camera_target()
+	record_ghost_frame()
 
 func finish_level():
 	if state != "play": return
@@ -1038,16 +1107,10 @@ func draw_world():
 		var c: Color = part.color
 		draw_circle(part.pos,part.size*alpha,Color(c.r,c.g,c.b,alpha))
 	if settings.ghost:
-		var rec = get_record(level_index)
-		var ghost = rec.ghost
-		var sample_index = int(run_time/0.06)
-		if sample_index >= 0 and sample_index < ghost.size():
-			var before = ghost[max(0,sample_index-1)]
-			var after = ghost[min(ghost.size()-1,sample_index+1)]
-			var ghost_velocity = (after-before)/0.12
-			var direction = sign(ghost_velocity.x) if abs(ghost_velocity.x)>1.0 else 1.0
-			var ghost_pose = CharacterArt.pose(ghost_velocity,direction,abs(ghost_velocity.y)<12,run_time,run_time*abs(ghost_velocity.x)/13.5)
-			CharacterArt.paint(self,ghost[sample_index],ghost_pose,int(settings.character),0.28,true)
+		var ghost = ghost_state(run_time)
+		if ghost != null:
+			var ghost_pose = CharacterArt.pose(ghost.velocity,ghost.facing,ghost.grounded,run_time,ghost.stride,ghost.landing,ghost.ring,ghost.reject,ghost.lean,ghost.scarf,ghost.takeoff,ghost.delight)
+			CharacterArt.paint(self,ghost.pos,ghost_pose,int(settings.character),0.28,true)
 	if invulnerable <= 0 or int(world_time*10)%2 == 0: draw_character(player,1.0,false)
 
 func draw_platform(platform):
