@@ -1,12 +1,18 @@
 extends SceneTree
 
+var failures = 0
+
 func _initialize():
 	call_deferred("run_tests")
 
 func run_tests():
-	var game = load("res://main.tscn").instantiate()
+	var game = load("res://tools/test_game.gd").new()
 	root.add_child(game)
 	await process_frame
+	game.set_physics_process(false)
+	game.settings.bell_delay = 1
+	game.settings.glass_time = 1
+	game.settings.speed = 1
 	await process_frame
 	check(game.state == "menu", "menu opens")
 	var play_button: Button
@@ -59,6 +65,10 @@ func run_tests():
 			game.run_time = 0.0
 		check(data.finish.x > 2300, "course %d has finish" % i)
 		check(game.ring_cooldown == 0, "course %d starts charged" % i)
+		for ledge in game.platforms:
+			if ledge.kind == "glass" and not ledge.has("relay"):
+				game.player = Vector2(ledge.x-90,ledge.y-42)
+				break
 		game.try_ring()
 		check(game.ring_cooldown > 1.0, "course %d bell cooldown" % i)
 		game.try_ring()
@@ -69,6 +79,8 @@ func run_tests():
 			if platform.kind == "glass" and platform.until > 0: active += 1
 		check(active > 0, "course %d glass responds to wave" % i)
 		if data.echoes.size() > 0:
+			game.delayed_waves.clear()
+			game.relay_ready.fill(0.0)
 			game.spawn_wave(data.echoes[0] + Vector2(-100,0), true)
 			for tick in range(8): game.update_waves(0.025)
 			check(game.delayed_waves.size() > 0, "course %d echo schedules repeat" % i)
@@ -123,14 +135,20 @@ func run_tests():
 	game.skip_cinematic()
 	check(game.state == "finale", "escape can be skipped")
 	game.show_menu()
-	print("ALL FIVE COURSES PASSED")
-	game.queue_free()
+	print("ALL FIVE COURSES PASSED" if failures == 0 else "%d CHECKS FAILED" % failures)
+	game.audio_streams.clear()
+	for child in game.get_children():
+		if child is AudioStreamPlayer:
+			child.stop()
+	game.free()
+	game = null
 	await process_frame
-	quit()
+	await process_frame
+	quit(0 if failures == 0 else 1)
 
 func check(condition, message):
 	if condition:
 		print("PASS: ", message)
 	else:
+		failures += 1
 		push_error("FAIL: " + message)
-		quit(1)

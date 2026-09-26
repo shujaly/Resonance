@@ -1,10 +1,16 @@
 extends Node2D
 
 const Levels = preload("res://levels.gd")
+const CharacterArt = preload("res://character.gd")
+const HazardArt = preload("res://hazard_art.gd")
 const UI_FONT = preload("res://art/Alegreya.ttf")
 const VIEW = Vector2(1280, 720)
 const BODY = Vector2(30, 42)
 const FOOT_HALF_WIDTH = 14.0
+const BELL_REACH = 340.0
+const ECHO_REACH = 520.0
+const WAVE_SPEED = 860.0
+const ECHO_DELAY = 0.62
 const SAVE_PATH = "user://one_more_bell_resonance.cfg"
 const ACTIONS = ["move_left", "move_right", "jump", "ring"]
 const ACTION_NAMES = ["Move left", "Move right", "Jump", "Ring bell"]
@@ -29,6 +35,14 @@ var ring_cooldown = 0.0
 var reject_anim = 0.0
 var ring_anim = 0.0
 var land_anim = 0.0
+var stride = 0.0
+var pose_clock = 0.0
+var body_lean = 0.0
+var scarf_motion = 0.0
+var takeoff_anim = 0.0
+var collect_anim = 0.0
+var land_weight = 0.0
+var relay_ready = []
 var invulnerable = 0.0
 var world_time = 0.0
 var run_time = 0.0
@@ -95,7 +109,7 @@ func load_save():
 		settings[key] = config.get_value("settings", key, settings[key])
 	for i in range(4): keys[i] = int(config.get_value("controls", ACTIONS[i], keys[i]))
 	for i in range(5):
-		records[str(i)] = {"best": float(config.get_value("level_%d" % i, "best", 0.0)), "all_notes": float(config.get_value("level_%d" % i, "all_notes", 0.0)), "ghost": config.get_value("level_%d" % i, "ghost", []), "splits": config.get_value("level_%d" % i, "splits", [])}
+		records[str(i)] = {"best": float(config.get_value("routes_2_%d" % i, "best", 0.0)), "all_notes": float(config.get_value("routes_2_%d" % i, "all_notes", 0.0)), "ghost": config.get_value("routes_2_%d" % i, "ghost", []), "splits": config.get_value("routes_2_%d" % i, "splits", [])}
 		completed[i] = bool(config.get_value("level_%d" % i, "completed", records[str(i)].best > 0.0))
 
 func save_data():
@@ -103,10 +117,10 @@ func save_data():
 	for i in range(4): config.set_value("controls", ACTIONS[i], keys[i])
 	for i in range(5):
 		var rec = get_record(i)
-		config.set_value("level_%d" % i, "best", rec.best)
-		config.set_value("level_%d" % i, "all_notes", rec.all_notes)
-		config.set_value("level_%d" % i, "ghost", rec.ghost)
-		config.set_value("level_%d" % i, "splits", rec.splits)
+		config.set_value("routes_2_%d" % i, "best", rec.best)
+		config.set_value("routes_2_%d" % i, "all_notes", rec.all_notes)
+		config.set_value("routes_2_%d" % i, "ghost", rec.ghost)
+		config.set_value("routes_2_%d" % i, "splits", rec.splits)
 		config.set_value("level_%d" % i, "completed", completed[i])
 	config.save(SAVE_PATH)
 
@@ -174,15 +188,19 @@ func start_level(i):
 	level_index = i
 	level = Levels.make(i)
 	platforms = level.platforms.duplicate(true)
+	relay_ready.resize(level.echoes.size())
+	relay_ready.fill(0.0)
 	notes_taken = [false, false, false]
 	waves.clear(); delayed_waves.clear(); particles.clear()
 	run_time = 0.0; world_time = 0.0; ghost_tick = 0.0
 	velocity = Vector2.ZERO; ring_cooldown = 0.0; reject_anim = 0.0; ring_anim = 0.0; invulnerable = 0.0
 	grounded = false; coyote = 0.0; jump_buffer = 0.0; jump_held = false
+	reset_character_motion()
 	split_index = 0; section_times = []
 	deaths = 0; ghost_samples.clear()
 	result_comparison.clear()
 	player = level.spawn
+	facing = 1.0
 	camera = camera_target()
 	state = "play"
 	clear_ui()
@@ -288,17 +306,33 @@ func try_ring():
 	if ring_cooldown > 0.0:
 		if reject_anim <= 0.05: play_sfx("reject", 0.98, 0.55)
 		reject_anim = 0.48
-		spawn_particles(player + Vector2(16,-24), Color("d4a58a"), 4)
 		return
 	ring_cooldown = bell_delay()
-	ring_anim = 0.37
-	spawn_wave(player + Vector2(0,-22), true)
+	ring_anim = 0.42
+	spawn_wave(player + Vector2(facing*20,20), true)
 	play_sfx("ring", rng.randf_range(0.98,1.025), 0.83)
-	spawn_particles(player + Vector2(0,-20), level.theme, 10)
+	spawn_particles(player + Vector2(facing*20,20), level.theme, 8)
 	shake = max(shake, 2.3)
 
-func spawn_wave(origin, can_echo):
-	waves.append({"origin": origin, "radius": 0.0, "age": 0.0, "echo": can_echo, "hit_platforms": [], "hit_echoes": []})
+func spawn_wave(origin, can_echo, relay=-1):
+	waves.append({"origin": origin, "radius": 0.0, "age": 0.0, "echo": can_echo, "relay": relay, "reach": BELL_REACH if can_echo else ECHO_REACH, "hit_platforms": [], "hit_echoes": []})
+
+func reset_character_motion():
+	stride = 0.0; pose_clock = 0.0; body_lean = 0.0; scarf_motion = 0.0
+	takeoff_anim = 0.0; collect_anim = 0.0; land_anim = 0.0; land_weight = 0.0
+
+func update_character_motion(delta):
+	pose_clock += delta
+	if grounded: stride += abs(velocity.x) * delta / 13.5
+	body_lean = move_toward(body_lean, clamp(velocity.x/290.0,-1.0,1.0)*2.8, delta*22.0)
+	scarf_motion = lerp(scarf_motion, clamp(-velocity.y/100.0,-5.0,7.0), 1.0-exp(-delta*9.0))
+	takeoff_anim = max(0.0,takeoff_anim-delta)
+	collect_anim = max(0.0,collect_anim-delta)
+
+func character_pose():
+	var clock = cinematic_time if state in ["intro","outro"] else pose_clock
+	var step = clock*7.0 if state in ["intro","outro"] else stride
+	return CharacterArt.pose(velocity, facing, grounded, clock, step, land_anim*land_weight, ring_anim, reject_anim, body_lean, scarf_motion, takeoff_anim, collect_anim)
 
 func _physics_process(delta):
 	world_time += delta
@@ -329,6 +363,7 @@ func update_game(delta):
 	velocity.x = move_toward(velocity.x, target_speed, (2500.0 if grounded else 1600.0) * delta)
 	if jump_buffer > 0 and coyote > 0:
 		velocity.y = -685.0
+		takeoff_anim = 0.18
 		grounded = false; coyote = 0.0; jump_buffer = 0.0
 		play_sfx("jump", rng.randf_range(0.96,1.04), 0.78)
 		spawn_particles(player + Vector2(0,0), Color("9fd7df"), 6)
@@ -348,16 +383,19 @@ func update_game(delta):
 			if can_land_on(platform, old_bottom, player.y + BODY.y, player.x):
 				if landed == null or platform.y < landed.y: landed = platform
 	if landed != null:
+		var impact_speed = velocity.y
 		player.y = landed.y - BODY.y
 		velocity.y = 0
 		grounded = true; coyote = 0.115
 		if not was_grounded:
 			land_anim = 0.22
+			land_weight = clamp(impact_speed/650.0,0.3,1.0)
 			spawn_particles(player + Vector2(0,BODY.y), Color("c5d3d2") if landed.kind == "stone" else level.theme, 8)
 			play_sfx("glass" if landed.kind == "glass" else "stone" if landed.kind == "stone" else "bronze", rng.randf_range(0.95,1.06), 0.72)
 			shake = max(shake, 1.3)
 		if landed.kind == "bronze" and not was_grounded:
 			velocity.y = -890.0
+			takeoff_anim = 0.26
 			grounded = false; coyote = 0.0
 			ring_cooldown = 0.0
 			spawn_particles(player + Vector2(0,BODY.y), Color("ffcf7f"), 18)
@@ -368,6 +406,7 @@ func update_game(delta):
 	for i in range(3):
 		if not notes_taken[i] and player.distance_to(level.notes[i]) < 35:
 			notes_taken[i] = true
+			collect_anim = 0.6
 			play_sfx("collect", 1.0 + i*0.12, 0.78)
 			spawn_particles(level.notes[i], Color("ffe8a8"), 18)
 	for i in range(split_index, 2):
@@ -377,6 +416,7 @@ func update_game(delta):
 			break
 	update_waves(delta)
 	if update_hazards(): return
+	update_character_motion(delta)
 	update_particles(delta)
 	if player.distance_to(level.finish) < 58: finish_level()
 	camera = camera.lerp(camera_target(), min(1.0, delta * 5.0))
@@ -394,28 +434,35 @@ func update_waves(delta):
 		delayed.delay -= delta
 	for delayed in delayed_waves.duplicate():
 		if delayed.delay <= 0:
-			spawn_wave(delayed.origin, false)
+			spawn_wave(delayed.origin, false, delayed.relay)
 			play_sfx("echo", 1.08, 0.8)
 			delayed_waves.erase(delayed)
 	for wave in waves.duplicate():
+		var previous_radius = wave.radius
 		wave.age += delta
-		wave.radius = wave.age * 1040.0
+		wave.radius = min(wave.reach, wave.age * WAVE_SPEED)
 		for i in range(platforms.size()):
 			var platform = platforms[i]
 			if platform.kind != "glass" or i in wave.hit_platforms: continue
+			if platform.has("relay") and (wave.echo or wave.relay != platform.relay): continue
 			var center = Vector2(platform.x + platform.w/2, platform.y)
-			if abs(center.distance_to(wave.origin) - wave.radius) < max(45.0, 1040.0*delta):
-				platform.until = max(platform.until, run_time + glass_duration())
+			var distance = center.distance_to(wave.origin)
+			if distance <= wave.reach and distance >= previous_radius and distance <= wave.radius:
 				wave.hit_platforms.append(i)
-				play_sfx("glass", 1.12 + float(i%5)*0.11, 0.30)
+				if platform.until <= run_time:
+					platform.until = run_time + glass_duration() * (0.68 if platform.has("relay") else 1.0)
+					play_sfx("glass", 1.12 + float(i%5)*0.11, 0.30)
 		if wave.echo:
 			for i in range(level.echoes.size()):
 				if i in wave.hit_echoes: continue
-				if abs(level.echoes[i].distance_to(wave.origin) - wave.radius) < max(40.0, 1040.0*delta):
+				var distance = level.echoes[i].distance_to(wave.origin)
+				if distance <= wave.reach and distance >= previous_radius and distance <= wave.radius:
 					wave.hit_echoes.append(i)
-					delayed_waves.append({"origin": level.echoes[i], "delay": 0.48})
-					spawn_particles(level.echoes[i], Color("c79bff"), 12)
-		if wave.age > 1.2: waves.erase(wave)
+					if relay_ready[i] <= run_time:
+						relay_ready[i] = run_time + ECHO_DELAY + ECHO_REACH/WAVE_SPEED + glass_duration()*0.68
+						delayed_waves.append({"origin": level.echoes[i], "delay": ECHO_DELAY, "relay": i})
+						spawn_particles(level.echoes[i], Color("c79bff"), 8)
+		if wave.radius >= wave.reach: waves.erase(wave)
 
 func hazard_pos(hazard):
 	var angle = sin(run_time * 1.85 + hazard.phase) * atan(hazard.span / 145.0)
@@ -470,13 +517,18 @@ func update_hazards():
 func respawn():
 	deaths += 1
 	player = level.spawn
+	facing = 1.0
 	run_time = 0.0
 	split_index = 0
 	section_times.clear()
 	notes_taken = [false, false, false]
 	ghost_samples.clear()
+	ghost_tick = 0.0
 	velocity = Vector2.ZERO
 	grounded = false; coyote = 0.0; jump_buffer = 0.0
+	jump_held = false
+	reset_character_motion()
+	relay_ready.fill(0.0)
 	ring_cooldown = 0.0; ring_anim = 0.0; reject_anim = 0.0
 	invulnerable = 0.28
 	flash = 0.10 if settings.flash else 0.0
@@ -691,9 +743,9 @@ func show_help():
 	make_label(ui, "SPACE or ↑              Jump · hold for height", Vector2(81,213), 23, Color("e7f1f5"))
 	make_label(ui, "J or SHIFT              Ring the handbell", Vector2(81,260), 23, Color("e7f1f5"))
 	make_label(ui, "ESC                         Pause", Vector2(81,307), 23, Color("e7f1f5"))
-	make_label(ui, "GLASS     Solid for a few seconds after the soundwave reaches it.", Vector2(81,381), 20, Color("9ae8f4"), 1100)
+	make_label(ui, "GLASS     Ring nearby. Lit glass cannot be refreshed; blinking means it is fading.", Vector2(81,381), 20, Color("9ae8f4"), 1100)
 	make_label(ui, "BRONZE  Launches you upward and restores the bell immediately.", Vector2(81,420), 20, Color("ffd18c"), 1100)
-	make_label(ui, "ECHO       Repeats your wave after a short delay.", Vector2(81,459), 20, Color("d2aaff"), 1100)
+	make_label(ui, "ECHO       A delayed pulse opens the violet, diamond-marked shortcut ledges.", Vector2(81,459), 20, Color("d2aaff"), 1100)
 	make_label(ui, "The bell recharges over time. Ringing early gets a head shake.", Vector2(81,518), 18, Color("c9d6df"), 1100)
 	make_button(ui, "←  BACK", Vector2(80,620), Vector2(200,56), func(): show_menu()).grab_focus()
 
@@ -970,14 +1022,14 @@ func draw_world():
 		var platform = platforms[i]
 		if platform.x+platform.w < start_x or platform.x > end_x: continue
 		draw_platform(platform)
-	for echo in level.echoes: draw_echo(echo)
+	for i in range(level.echoes.size()): draw_echo(level.echoes[i],i)
 	for i in range(3):
 		if not notes_taken[i]: draw_note(level.notes[i], i)
 	for hazard in level.hazards: draw_hazard(hazard)
 	for obstacle in level.obstacles: draw_obstacle(obstacle)
 	draw_finish(level.finish)
 	for wave in waves:
-		var a = 1.0 - wave.age/1.2
+		var a = 1.0 - wave.radius/wave.reach
 		var wave_color = Color("c5a2ff") if not wave.echo else level.theme
 		draw_arc(wave.origin,wave.radius,0,TAU,100,Color(wave_color.r,wave_color.g,wave_color.b,max(0.0,a)*0.85),4.0)
 		draw_arc(wave.origin,max(0,wave.radius-15),0,TAU,100,Color(wave_color.r,wave_color.g,wave_color.b,max(0.0,a)*0.25),2.0)
@@ -989,7 +1041,13 @@ func draw_world():
 		var rec = get_record(level_index)
 		var ghost = rec.ghost
 		var sample_index = int(run_time/0.06)
-		if sample_index >= 0 and sample_index < ghost.size(): draw_character(ghost[sample_index],0.28,true)
+		if sample_index >= 0 and sample_index < ghost.size():
+			var before = ghost[max(0,sample_index-1)]
+			var after = ghost[min(ghost.size()-1,sample_index+1)]
+			var ghost_velocity = (after-before)/0.12
+			var direction = sign(ghost_velocity.x) if abs(ghost_velocity.x)>1.0 else 1.0
+			var ghost_pose = CharacterArt.pose(ghost_velocity,direction,abs(ghost_velocity.y)<12,run_time,run_time*abs(ghost_velocity.x)/13.5)
+			CharacterArt.paint(self,ghost[sample_index],ghost_pose,int(settings.character),0.28,true)
 	if invulnerable <= 0 or int(world_time*10)%2 == 0: draw_character(player,1.0,false)
 
 func draw_platform(platform):
@@ -997,10 +1055,12 @@ func draw_platform(platform):
 	var y = platform.y
 	var w = platform.w
 	if platform.kind == "glass":
+		var resonant = platform.has("relay")
 		var active = platform.until > run_time
 		var blink = active and platform.until-run_time < 0.75 and int(world_time*14.0)%2 == 0
 		var rim = Color("eff9ff") if settings.contrast and active else Color("b6a284") if active else Color("707980")
-		var crystal = Color(0.67,0.86,1.0,0.75 if active and not blink else 0.27 if active else 0.12)
+		var crystal = Color("c4a3eb") if resonant else Color("abdbff")
+		crystal.a = 0.75 if active and not blink else 0.27 if active else 0.12
 		draw_rect(Rect2(x,y+3,w,21),Color("152233"))
 		draw_rect(Rect2(x+4,y+5,w-8,15),crystal)
 		for j in range(int(w/36.0)):
@@ -1010,6 +1070,9 @@ func draw_platform(platform):
 			draw_line(Vector2(xx+21,y+6),Vector2(xx+11,y+18),Color(0.12,0.27,0.40,0.5),1)
 		draw_rect(Rect2(x,y,w,24),rim,false,2)
 		draw_line(Vector2(x,y),Vector2(x+w,y),Color("f4f6ed") if settings.contrast and active else Color("e9e4d5") if active and not blink else Color("879ca3"),2)
+		if resonant:
+			var gem = Vector2(x+w/2,y+12)
+			draw_colored_polygon(PackedVector2Array([gem+Vector2(-5,0),gem+Vector2(0,-6),gem+Vector2(5,0),gem+Vector2(0,6)]),Color("f3dfff") if active and not blink else Color("ac87cf"))
 	elif platform.kind == "bronze":
 		draw_rect(Rect2(x,y+8,w,22),Color("23303a"))
 		draw_rect(Rect2(x,y+5,w,7),Color("b78e5a"))
@@ -1030,13 +1093,23 @@ func draw_platform(platform):
 		draw_line(Vector2(x,y),Vector2(x+w,y),Color("ffe2a7") if settings.contrast else Color("e0bd83"),3)
 		draw_line(Vector2(x,y+29),Vector2(x+w,y+29),Color("987d58"),2)
 
-func draw_echo(pos):
-	var swell = 1.0 + sin(world_time*4.0)*0.08
-	draw_arc(pos,28*swell,0,TAU,40,Color("b999ff"),3.0)
-	draw_arc(pos,38+swell*3,0,TAU,40,Color(0.75,0.58,1.0,0.3),2.0)
-	draw_circle(pos,18,Color("583d99"))
-	draw_circle(pos,8,Color("f4d6ff"))
-	draw_text("ECHO",pos+Vector2(-18,-44),12,Color("e8cbff"))
+func draw_echo(pos, index):
+	var pending = -1.0
+	for delayed in delayed_waves:
+		if delayed.relay == index: pending = 1.0-clamp(delayed.delay/ECHO_DELAY,0.0,1.0)
+	var ready = relay_ready[index] <= run_time
+	var ink = Color("c7a7ef") if ready or pending >= 0 else Color("756787")
+	for platform in platforms:
+		if platform.get("relay",-1) != index: continue
+		var end = Vector2(platform.x+platform.w/2,platform.y+12)
+		draw_line(pos,end,Color(0.68,0.53,0.82,0.23 if pending>=0 else 0.09),1.0,true)
+	draw_circle(pos,20,Color("20212f"))
+	draw_arc(pos,21,0,TAU,40,ink,2.0)
+	for side in [-1,1]:
+		var tine = Vector2(side*(8.0-(pending*6 if pending>=0 else 0)),0)
+		draw_line(pos+tine+Vector2(0,-12),pos+tine+Vector2(0,9),ink,3.0,true)
+	draw_line(pos+Vector2(-8,10),pos+Vector2(8,10),ink,2.0,true)
+	draw_circle(pos+Vector2(0,15),2.5,Color("e6d4ff") if ready else ink)
 
 func draw_note(pos,index):
 	var y = sin(world_time*3.2+index)*6.0
@@ -1092,29 +1165,7 @@ func draw_escapement_bob(center, phase):
 func draw_obstacle(obstacle):
 	var pos = Vector2(obstacle.x,obstacle.y)
 	if obstacle.kind == "steam":
-		var pressure = steam_pressure(obstacle)
-		var warning = pressure > 0.0
-		var rattle = sin(world_time*52.0+obstacle.x)*2.0*pressure
-		var vent = pos + Vector2(rattle,0)
-		if warning:
-			draw_circle(pos+Vector2(0,-9),25.0+pressure*6.0,Color(0.94,0.62,0.29,0.08+pressure*0.15))
-			draw_rect(Rect2(pos+Vector2(-30,-5),Vector2(60,6)),Color(0.9,0.6,0.3,0.14+pressure*0.30))
-			draw_line(vent+Vector2(-25,-10),vent+Vector2(-21,-13),Color("dbbd89"),1.3)
-			draw_line(vent+Vector2(21,-13),vent+Vector2(25,-10),Color("dbbd89"),1.3)
-		draw_rect(Rect2(vent+Vector2(-23,-6),Vector2(46,8)),Color("4c5861"))
-		if warning: draw_rect(Rect2(vent+Vector2(-20,-6),Vector2(40,3)),Color("f6c77d"))
-		for i in range(3): draw_circle(vent+Vector2(-14+i*14,-4),3,Color("eec284") if warning else Color("9d9076"))
-		if obstacle_active(obstacle):
-			for i in range(4):
-				var drift = sin(world_time*6.0+i*1.8)*7.0
-				draw_circle(pos+Vector2(drift,-16-i*18),9+i*2,Color(0.73,0.86,0.86,0.34-i*0.055))
-		elif warning:
-			for i in range(6):
-				var wisp_y = 9.0 + fposmod(world_time*(22.0+pressure*22.0)+i*11.0,52.0)
-				var wisp_x = sin(world_time*9.0+i*2.1)*7.0 + (-8.0 if i%2==0 else 8.0)
-				draw_circle(vent+Vector2(wisp_x,-wisp_y),5.0+pressure*3.0,Color(0.83,0.88,0.81,0.23+pressure*0.23))
-		else:
-			draw_circle(pos+Vector2(0,-13),5,Color(0.75,0.85,0.86,0.18))
+		HazardArt.steam(self,pos,level_index%3,world_time,steam_pressure(obstacle),obstacle_active(obstacle),settings.contrast)
 	elif obstacle.kind == "piston":
 		var head = piston_pos(obstacle)
 		var warning = fposmod(run_time+obstacle.phase,3.2) > 2.6
@@ -1124,10 +1175,7 @@ func draw_obstacle(obstacle):
 		draw_rect(Rect2(head+Vector2(-24,-11),Vector2(48,19)),Color("e0b774") if warning else Color("b08c62"))
 		for i in range(3): draw_line(head+Vector2(-17+i*17,14),head+Vector2(-11+i*17,25),Color("d4bd92"),3)
 	else:
-		draw_rect(Rect2(pos+Vector2(-25,-2),Vector2(50,7)),Color("4e4b46"))
-		for i in range(4):
-			var x = pos.x-22+i*13
-			draw_colored_polygon(PackedVector2Array([Vector2(x,pos.y-2),Vector2(x+6,pos.y-24),Vector2(x+12,pos.y-2)]),Color("c2b49a"))
+		HazardArt.spikes(self,pos,level_index%3,settings.contrast)
 
 func draw_finish(pos):
 	draw_rect(Rect2(pos+Vector2(-31,-51),Vector2(62,91)),Color(0.86,0.67,0.39,0.09))
@@ -1138,41 +1186,7 @@ func draw_finish(pos):
 	draw_circle(pos+Vector2(0,-13),4,Color("f6e1ae"))
 
 func draw_character(pos, alpha=1.0, ghost=false):
-	var model = int(settings.character)
-	var bob = sin(world_time*18)*2.4 if grounded and abs(velocity.x)>25 and not ghost else 0.0
-	var squash = land_anim*16 if not ghost else 0.0
-	var head_x = sin((0.48-reject_anim)*43)*4.0 if reject_anim>0 and not ghost else 0.0
-	var body_color = [Color("313650"),Color("976746"),Color("6d5688"),Color("377f88")][model]
-	var trim = [Color("eeac6a"),Color("75d5e0"),Color("e8beee"),Color("b9f4db")][model]
-	if ghost:
-		body_color = Color("a7e6fa")
-		trim = Color("dcf5ff")
-	var cloak = PackedVector2Array([pos+Vector2(-12,18+bob),pos+Vector2(12,18+bob),pos+Vector2(16,40-squash),pos+Vector2(-16,40-squash)])
-	draw_colored_polygon(cloak,Color(body_color.r,body_color.g,body_color.b,alpha))
-	var scarf_end = pos+Vector2(-facing*(22+abs(velocity.x)/24.0),19+bob+sin(world_time*13)*3)
-	draw_line(pos+Vector2(-facing*4,18+bob),scarf_end,Color(trim.r,trim.g,trim.b,alpha),5)
-	if model == 0:
-		draw_circle(pos+Vector2(head_x,10+bob),15,Color(body_color.r,body_color.g,body_color.b,alpha))
-		draw_colored_polygon(PackedVector2Array([pos+Vector2(head_x-13,5+bob),pos+Vector2(head_x, -7+bob),pos+Vector2(head_x+13,5+bob)]),Color(body_color.r,body_color.g,body_color.b,alpha))
-	elif model == 1:
-		draw_rect(Rect2(pos+Vector2(head_x-13,-1+bob),Vector2(26,25)),Color(body_color.r,body_color.g,body_color.b,alpha))
-		draw_line(pos+Vector2(head_x,-2+bob),pos+Vector2(head_x,-12+bob),Color(trim.r,trim.g,trim.b,alpha),3)
-		draw_circle(pos+Vector2(head_x,-13+bob),4,Color(trim.r,trim.g,trim.b,alpha))
-	elif model == 2:
-		for side in [-1,1]:
-			draw_colored_polygon(PackedVector2Array([pos+Vector2(head_x+side*7,1+bob),pos+Vector2(head_x+side*17,-13+bob),pos+Vector2(head_x+side*16,8+bob)]),Color(trim.r,trim.g,trim.b,alpha))
-		draw_circle(pos+Vector2(head_x,11+bob),13,Color(body_color.r,body_color.g,body_color.b,alpha))
-	else:
-		draw_circle(pos+Vector2(head_x,9+bob),14,Color(body_color.r,body_color.g,body_color.b,alpha))
-		draw_colored_polygon(PackedVector2Array([pos+Vector2(head_x-8,0+bob),pos+Vector2(head_x+1,-16+bob),pos+Vector2(head_x+9,1+bob)]),Color(trim.r,trim.g,trim.b,alpha))
-	draw_circle(pos+Vector2(head_x+facing*5,11+bob),2.5,Color(0.95,0.98,1.0,alpha))
-	for side in [-1,1]:
-		var lift = sin(world_time*18+side*PI)*3 if abs(velocity.x)>25 and grounded else 0.0
-		draw_line(pos+Vector2(side*7,34-squash),pos+Vector2(side*9,43-squash+lift),Color(trim.r*0.55,trim.g*0.55,trim.b*0.55,alpha),4)
-	var bell_pos = pos+Vector2(facing*19,25+bob+sin(world_time*22)*ring_anim*6)
-	draw_line(pos+Vector2(facing*9,22+bob),bell_pos,Color(trim.r,trim.g,trim.b,alpha),3)
-	draw_circle(bell_pos,7,Color("fbd885",alpha) if not ghost else Color(0.8,0.95,1.0,alpha))
-	draw_rect(Rect2(bell_pos+Vector2(-8,4),Vector2(16,4)),Color("ffe7a8",alpha))
+	CharacterArt.paint(self,pos,character_pose(),int(settings.character),alpha,ghost)
 
 func draw_hud():
 	var charge = clamp(1.0-ring_cooldown/bell_delay(),0.0,1.0)
