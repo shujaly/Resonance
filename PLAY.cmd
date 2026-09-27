@@ -1,35 +1,24 @@
 @echo off
-setlocal EnableExtensions
-pushd "%~dp0" || (
-    echo Could not open the game folder.
-    pause
+setlocal EnableExtensions DisableDelayedExpansion
+set "MODE=play"
+if /I "%~1"=="--verify" set "MODE=verify"
+if /I "%~1"=="--check" set "MODE=check"
+if not "%~1"=="" if "%MODE%"=="play" (
+    echo Usage: PLAY.cmd [--check ^| --verify]
     exit /b 1
 )
-set "GODOT=%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7.2-stable_win64.exe"
-if not exist "%GODOT%" (
-    set "GODOT="
-    for %%E in (Godot_v4.7.2-stable_win64.exe godot.exe godot) do (
-        if not defined GODOT for /f "delims=" %%P in ('where %%E 2^>nul') do if not defined GODOT set "GODOT=%%P"
-    )
-)
-if not exist "%GODOT%" (
-    echo Godot 4.7.2 was not found.
-    echo Add Godot to PATH or open project.godot in Godot and press F5.
-    popd
-    pause
+if not exist "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" (
+    echo Windows PowerShell is missing. Repair Windows PowerShell through Windows settings.
+    echo No software was installed.
+    if "%MODE%"=="play" pause
     exit /b 1
 )
-start /wait "" "%GODOT%" --headless --editor --path . --import --quit
-if errorlevel 1 (
-    echo Asset import failed. Open project.godot in Godot to see the error.
-    popd
-    pause
+if not exist "%~dp0tools\launch.ps1" (
+    echo Missing tools\launch.ps1. Extract the complete game folder before playing.
+    if "%MODE%"=="play" pause
     exit /b 1
 )
-if /I "%~1"=="--verify" (
-    echo Asset import succeeded.
-    popd
-    exit /b 0
-)
-start "" "%GODOT%" --path .
-popd
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\launch.ps1" -Mode "%MODE%"
+set "RESULT=%ERRORLEVEL%"
+if not "%RESULT%"=="0" if "%MODE%"=="play" pause
+exit /b %RESULT%
