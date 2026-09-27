@@ -11,6 +11,17 @@ const BELL_REACH = 340.0
 const ECHO_REACH = 520.0
 const WAVE_SPEED = 860.0
 const ECHO_DELAY = 0.62
+const GRAVITY = 1650.0
+const SWING_KICK = 1.15
+const SWING_DAMPING = 0.1
+const SWING_LIMIT = 1.15
+const LIFT_SPEED = 170.0
+const LIFT_SINK = 55.0
+const LIFT_HUM = 1.0
+const TOLL_DELAY = 0.85
+const TOLL_REACH = 300.0
+const TOLL_REST = 2.6
+const ROUTE_SETS = [2, 3, 3, 3, 3]
 const GHOST_STEP = 1.0 / 60.0
 const GHOST_FIELDS = 14
 const GHOST_LIMIT = 10800
@@ -47,6 +58,11 @@ var takeoff_anim = 0.0
 var collect_anim = 0.0
 var land_weight = 0.0
 var relay_ready = []
+var swings = []
+var lifts = []
+var great_bells = []
+var reflections = []
+var riding = null
 var invulnerable = 0.0
 var world_time = 0.0
 var run_time = 0.0
@@ -114,7 +130,8 @@ func load_save():
 		settings[key] = config.get_value("settings", key, settings[key])
 	for i in range(4): keys[i] = int(config.get_value("controls", ACTIONS[i], keys[i]))
 	for i in range(5):
-		records[str(i)] = {"best": float(config.get_value("routes_2_%d" % i, "best", 0.0)), "all_notes": float(config.get_value("routes_2_%d" % i, "all_notes", 0.0)), "ghost": config.get_value("routes_2_%d" % i, "ghost", []), "splits": config.get_value("routes_2_%d" % i, "splits", [])}
+		var section = record_section(i)
+		records[str(i)] = {"best": float(config.get_value(section, "best", 0.0)), "all_notes": float(config.get_value(section, "all_notes", 0.0)), "ghost": config.get_value(section, "ghost", []), "splits": config.get_value(section, "splits", [])}
 		completed[i] = bool(config.get_value("level_%d" % i, "completed", records[str(i)].best > 0.0))
 
 func save_data():
@@ -122,12 +139,16 @@ func save_data():
 	for i in range(4): config.set_value("controls", ACTIONS[i], keys[i])
 	for i in range(5):
 		var rec = get_record(i)
-		config.set_value("routes_2_%d" % i, "best", rec.best)
-		config.set_value("routes_2_%d" % i, "all_notes", rec.all_notes)
-		config.set_value("routes_2_%d" % i, "ghost", rec.ghost)
-		config.set_value("routes_2_%d" % i, "splits", rec.splits)
+		var section = record_section(i)
+		config.set_value(section, "best", rec.best)
+		config.set_value(section, "all_notes", rec.all_notes)
+		config.set_value(section, "ghost", rec.ghost)
+		config.set_value(section, "splits", rec.splits)
 		config.set_value("level_%d" % i, "completed", completed[i])
 	config.save(SAVE_PATH)
+
+func record_section(i):
+	return "routes_%d_%d" % [ROUTE_SETS[i], i]
 
 func get_record(i):
 	if not records.has(str(i)): records[str(i)] = {"best": 0.0, "all_notes": 0.0, "ghost": [], "splits": []}
@@ -195,6 +216,7 @@ func start_level(i):
 	platforms = level.platforms.duplicate(true)
 	relay_ready.resize(level.echoes.size())
 	relay_ready.fill(0.0)
+	reset_mechanisms()
 	notes_taken = [false, false, false]
 	waves.clear(); delayed_waves.clear(); particles.clear()
 	run_time = 0.0; world_time = 0.0
@@ -316,13 +338,115 @@ func try_ring():
 		return
 	ring_cooldown = bell_delay()
 	ring_anim = 0.42
-	spawn_wave(player + Vector2(facing*20,20), true)
+	var wave = spawn_wave(player + Vector2(facing*20,20), true)
+	wave.facing = facing
+	if riding != null and riding.kind == "swing": wave.seat = riding.index
 	play_sfx("ring", rng.randf_range(0.98,1.025), 0.83)
 	spawn_particles(player + Vector2(facing*20,20), level.theme, 8)
 	shake = max(shake, 2.3)
 
-func spawn_wave(origin, can_echo, relay=-1):
-	waves.append({"origin": origin, "radius": 0.0, "age": 0.0, "echo": can_echo, "relay": relay, "reach": BELL_REACH if can_echo else ECHO_REACH, "hit_platforms": [], "hit_echoes": []})
+func spawn_wave(origin, can_echo, relay=-1, reach=-1.0):
+	var wave = {"origin": origin, "radius": 0.0, "age": 0.0, "echo": can_echo, "relay": relay, "reach": reach if reach > 0.0 else BELL_REACH if can_echo else ECHO_REACH, "hit_platforms": [], "hit_echoes": [], "hit_mechanisms": [], "hit_mirrors": []}
+	waves.append(wave)
+	return wave
+
+func reset_mechanisms():
+	swings = []
+	for s in level.swings: swings.append({"angle": 0.0, "omega": 0.0, "struck": -10.0})
+	lifts = []
+	for l in level.lifts: lifts.append({"offset": 0.0, "hum": 0.0})
+	great_bells = []
+	for b in level.bells: great_bells.append({"toll_at": -1.0, "ready_at": 0.0, "rung": -10.0})
+	reflections = []
+	riding = null
+
+func deck(kind, i):
+	if kind == "swing":
+		var s = level.swings[i]
+		var angle = swings[i].angle
+		var seat = Vector2(s.x + sin(angle) * s.length, s.y + cos(angle) * s.length)
+		return {"x": seat.x - s.w/2, "y": seat.y, "w": s.w, "kind": kind, "index": i}
+	var l = level.lifts[i]
+	return {"x": l.x, "y": l.y - lifts[i].offset, "w": l.w, "kind": kind, "index": i}
+
+func decks():
+	var list = []
+	for i in range(swings.size()): list.append(deck("swing", i))
+	for i in range(lifts.size()): list.append(deck("lift", i))
+	return list
+
+func update_mechanisms(delta):
+	for i in range(swings.size()):
+		var s = swings[i]
+		var h = delta / 4.0
+		for step in range(4):
+			s.omega += (-GRAVITY / level.swings[i].length * sin(s.angle) - SWING_DAMPING * s.omega) * h
+			s.angle += s.omega * h
+		if abs(s.angle) > SWING_LIMIT:
+			s.angle = sign(s.angle) * SWING_LIMIT
+			s.omega = 0.0
+	for i in range(lifts.size()):
+		var l = lifts[i]
+		if l.hum > 0.0:
+			l.hum = max(0.0, l.hum - delta)
+			l.offset = min(level.lifts[i].travel, l.offset + LIFT_SPEED * delta)
+		else:
+			l.offset = max(0.0, l.offset - LIFT_SINK * delta)
+	for i in range(great_bells.size()):
+		var b = great_bells[i]
+		if b.toll_at >= 0.0 and run_time >= b.toll_at:
+			b.toll_at = -1.0
+			b.ready_at = run_time + TOLL_REST
+			b.rung = run_time
+			spawn_wave(level.bells[i], false, -1, TOLL_REACH).toll = true
+			play_sfx("ring", 0.5, 0.95)
+			shake = max(shake, 3.0)
+	reflections = reflections.filter(func(r): return run_time - r.time < 0.8)
+	if riding != null and grounded:
+		var now = deck(riding.kind, riding.index)
+		player += Vector2(now.x - riding.x, now.y - riding.y)
+		riding = now
+
+func mirror_crossing(m, from, to):
+	if is_equal_approx(to.x, from.x): return INF
+	var t = (m.x - from.x) / (to.x - from.x)
+	if t < 0.0 or t > 1.0: return INF
+	return from.y + t * (to.y - from.y)
+
+func reflects_to(wave, target):
+	var m = level.mirrors[wave.mirror]
+	if sign(target.x - m.x) != m.face: return false
+	var y = mirror_crossing(m, wave.origin, target)
+	return y >= m.top and y <= m.bottom
+
+func mechanism_targets():
+	var targets = []
+	for i in range(swings.size()):
+		var seat = deck("swing", i)
+		targets.append({"key": "swing%d" % i, "rect": Rect2(seat.x, seat.y, seat.w, 18.0), "kind": "swing", "index": i})
+	for i in range(lifts.size()):
+		var d = deck("lift", i)
+		targets.append({"key": "lift%d" % i, "rect": Rect2(d.x + d.w/2, d.y + 18.0, 0.0, 0.0), "kind": "lift", "index": i})
+	for i in range(great_bells.size()):
+		targets.append({"key": "bell%d" % i, "rect": Rect2(level.bells[i], Vector2.ZERO), "kind": "bell", "index": i})
+	return targets
+
+func strike_mechanism(target, wave):
+	var i = target.index
+	match target.kind:
+		"swing":
+			var s = swings[i]
+			var dir = wave.facing if wave.get("seat", -1) == i else signf(target.rect.get_center().x - wave.origin.x)
+			if dir == 0.0: dir = 1.0
+			s.omega += dir * SWING_KICK * cos(s.angle)
+			s.struck = run_time
+			play_sfx("bronze", 0.72, 0.45)
+		"lift":
+			lifts[i].hum = LIFT_HUM
+		"bell":
+			var b = great_bells[i]
+			if b.toll_at < 0.0 and b.ready_at <= run_time:
+				b.toll_at = run_time + TOLL_DELAY
 
 func reset_character_motion():
 	stride = 0.0; pose_clock = 0.0; body_lean = 0.0; scarf_motion = 0.0
@@ -364,6 +488,7 @@ func update_game(delta):
 	invulnerable = max(0.0, invulnerable - delta)
 	jump_buffer = max(0.0, jump_buffer - delta)
 	coyote = max(0.0, coyote - delta)
+	update_mechanisms(delta)
 	var axis = Input.get_axis("move_left", "move_right")
 	if abs(axis) > 0.08: facing = sign(axis)
 	var target_speed = axis * 290.0 * speed_mult()
@@ -374,21 +499,27 @@ func update_game(delta):
 		grounded = false; coyote = 0.0; jump_buffer = 0.0
 		play_sfx("jump", rng.randf_range(0.96,1.04), 0.78)
 		spawn_particles(player + Vector2(0,0), Color("9fd7df"), 6)
-	var gravity = 1650.0
+	var gravity = GRAVITY
 	if velocity.y < 0 and jump_held: gravity *= 0.77
 	if abs(velocity.y) < 90: gravity *= 0.84
 	velocity.y = min(900.0, velocity.y + gravity * delta)
 	var was_grounded = grounded
 	var old_bottom = player.y + BODY.y
+	var old_x = player.x
 	player.x = clamp(player.x + velocity.x * delta, 15.0, level.length - 15.0)
+	for m in level.mirrors:
+		if player_hurtbox(player).intersects(Rect2(m.x - 6.0, m.top, 12.0, m.bottom - m.top)):
+			player.x = m.x - 19.01 if old_x < m.x else m.x + 19.01
+			velocity.x = 0.0
 	player.y += velocity.y * delta
 	grounded = false
 	var landed = null
 	if velocity.y >= 0:
-		for platform in platforms:
+		for platform in platforms + decks():
 			if platform.kind == "glass" and platform.until <= run_time: continue
 			if can_land_on(platform, old_bottom, player.y + BODY.y, player.x):
 				if landed == null or platform.y < landed.y: landed = platform
+	riding = landed if landed != null and landed.has("index") else null
 	if landed != null:
 		var impact_speed = velocity.y
 		player.y = landed.y - BODY.y
@@ -449,13 +580,41 @@ func update_waves(delta):
 			var platform = platforms[i]
 			if platform.kind != "glass" or i in wave.hit_platforms: continue
 			if platform.has("relay") and (wave.echo or wave.relay != platform.relay): continue
+			if platform.has("silver") != wave.has("mirror"): continue
+			if platform.has("amber") and not wave.has("toll"): continue
 			var center = Vector2(platform.x + platform.w/2, platform.y)
+			if wave.has("mirror") and not reflects_to(wave, center): continue
 			var distance = center.distance_to(wave.origin)
 			if distance <= wave.reach and distance >= previous_radius and distance <= wave.radius:
 				wave.hit_platforms.append(i)
 				if platform.until <= run_time:
 					platform.until = run_time + glass_duration() * (0.68 if platform.has("relay") else 1.0)
 					play_sfx("glass", 1.12 + float(i%5)*0.11, 0.30)
+					if wave.has("mirror"):
+						var m = level.mirrors[wave.mirror]
+						reflections.append({"from": Vector2(2.0*m.x - wave.origin.x, wave.origin.y), "hit": Vector2(m.x, mirror_crossing(m, wave.origin, center)), "to": center, "time": run_time, "mirror": wave.mirror})
+		if not wave.has("mirror") and wave.relay < 0:
+			for target in mechanism_targets():
+				if target.key in wave.hit_mechanisms: continue
+				var rect: Rect2 = target.rect
+				var nearest = Vector2(clamp(wave.origin.x, rect.position.x, rect.end.x), clamp(wave.origin.y, rect.position.y, rect.end.y))
+				var distance = nearest.distance_to(wave.origin)
+				if distance <= wave.reach and distance >= previous_radius and distance <= wave.radius:
+					wave.hit_mechanisms.append(target.key)
+					strike_mechanism(target, wave)
+		if wave.echo:
+			for i in range(level.mirrors.size()):
+				if i in wave.hit_mirrors: continue
+				var m = level.mirrors[i]
+				if sign(wave.origin.x - m.x) != m.face: continue
+				var distance = Vector2(m.x, clamp(wave.origin.y, m.top, m.bottom)).distance_to(wave.origin)
+				if distance <= wave.radius and distance <= wave.reach:
+					wave.hit_mirrors.append(i)
+					var image = spawn_wave(Vector2(2.0*m.x - wave.origin.x, wave.origin.y), false, -1, wave.reach)
+					image.age = wave.age
+					image.radius = wave.radius
+					image.mirror = i
+					play_sfx("glass", 1.5, 0.22)
 		if wave.echo:
 			for i in range(level.echoes.size()):
 				if i in wave.hit_echoes: continue
@@ -605,6 +764,7 @@ func respawn():
 	for platform in platforms:
 		if platform.kind == "glass": platform.until = 0.0
 	waves.clear(); delayed_waves.clear()
+	reset_mechanisms()
 	camera = camera_target()
 	record_ghost_frame()
 
@@ -812,11 +972,19 @@ func show_help():
 	make_label(ui, "SPACE or ↑              Jump · hold for height", Vector2(81,213), 23, Color("e7f1f5"))
 	make_label(ui, "J or SHIFT              Ring the handbell", Vector2(81,260), 23, Color("e7f1f5"))
 	make_label(ui, "ESC                         Pause", Vector2(81,307), 23, Color("e7f1f5"))
-	make_label(ui, "GLASS     Ring nearby. Lit glass cannot be refreshed; blinking means it is fading.", Vector2(81,381), 20, Color("9ae8f4"), 1100)
-	make_label(ui, "BRONZE  Launches you upward and restores the bell immediately.", Vector2(81,420), 20, Color("ffd18c"), 1100)
-	make_label(ui, "ECHO       A delayed pulse opens the violet, diamond-marked shortcut ledges.", Vector2(81,459), 20, Color("d2aaff"), 1100)
-	make_label(ui, "The bell recharges over time. Ringing early gets a head shake.", Vector2(81,518), 18, Color("c9d6df"), 1100)
-	make_button(ui, "←  BACK", Vector2(80,620), Vector2(200,56), func(): show_menu()).grab_focus()
+	var rows = [
+		["GLASS", "Ring nearby. Lit glass cannot be refreshed; blinking means it is fading.", Color("9ae8f4")],
+		["BRONZE", "Launches you upward and restores the bell immediately.", Color("ffd18c")],
+		["ECHO", "A delayed pulse opens the violet, diamond-marked shortcut ledges.", Color("d2aaff")],
+		["SWING", "Ring as it moves away from you, or face its motion while riding, to build height.", Color("f0d8a1")],
+		["MIRROR", "Silvered ledges only answer a ring reflected off the mirror.", Color("e2e8ee")],
+		["LIFT", "Climbs while it hears the bell and sinks when the tower falls quiet.", Color("d8c08e")],
+		["GREAT BELL", "Tolls after a moment, lights amber glass, and can wake the next bell.", Color("f0bf72")]]
+	for i in range(rows.size()):
+		make_label(ui, rows[i][0], Vector2(81,362+i*34), 19, rows[i][2], 150)
+		make_label(ui, rows[i][1], Vector2(222,362+i*34), 19, rows[i][2], 980)
+	make_label(ui, "The bell recharges over time. Ringing early gets a head shake.", Vector2(81,610), 17, Color("c9d6df"), 1100)
+	make_button(ui, "←  BACK", Vector2(80,648), Vector2(200,50), func(): show_menu()).grab_focus()
 
 func setting_title(parent, title):
 	var label = Label.new()
@@ -1091,6 +1259,14 @@ func draw_world():
 		var platform = platforms[i]
 		if platform.x+platform.w < start_x or platform.x > end_x: continue
 		draw_platform(platform)
+	for i in range(level.mirrors.size()): draw_mirror(i)
+	for i in range(lifts.size()): draw_lift(i)
+	for i in range(swings.size()): draw_swing(i)
+	for i in range(great_bells.size()): draw_great_bell(i)
+	for ray in reflections:
+		var fade = clamp(1.0 - (run_time - ray.time) / 0.8, 0.0, 1.0)
+		draw_line(ray.from, ray.hit, Color(0.87,0.91,0.95,0.30*fade), 1.5, true)
+		draw_line(ray.hit, ray.to, Color(0.87,0.91,0.95,0.55*fade), 1.5, true)
 	for i in range(level.echoes.size()): draw_echo(level.echoes[i],i)
 	for i in range(3):
 		if not notes_taken[i]: draw_note(level.notes[i], i)
@@ -1099,7 +1275,10 @@ func draw_world():
 	draw_finish(level.finish)
 	for wave in waves:
 		var a = 1.0 - wave.radius/wave.reach
-		var wave_color = Color("c5a2ff") if not wave.echo else level.theme
+		var wave_color = level.theme if wave.echo else Color("dfe8f0") if wave.has("mirror") else Color("f3c77f") if wave.has("toll") else Color("c5a2ff")
+		if wave.has("mirror"):
+			draw_reflected_wave(wave, Color(wave_color.r,wave_color.g,wave_color.b,max(0.0,a)*0.8))
+			continue
 		draw_arc(wave.origin,wave.radius,0,TAU,100,Color(wave_color.r,wave_color.g,wave_color.b,max(0.0,a)*0.85),4.0)
 		draw_arc(wave.origin,max(0,wave.radius-15),0,TAU,100,Color(wave_color.r,wave_color.g,wave_color.b,max(0.0,a)*0.25),2.0)
 	for part in particles:
@@ -1121,8 +1300,10 @@ func draw_platform(platform):
 		var resonant = platform.has("relay")
 		var active = platform.until > run_time
 		var blink = active and platform.until-run_time < 0.75 and int(world_time*14.0)%2 == 0
+		var silvered = platform.has("silver")
+		var amber = platform.has("amber")
 		var rim = Color("eff9ff") if settings.contrast and active else Color("b6a284") if active else Color("707980")
-		var crystal = Color("c4a3eb") if resonant else Color("abdbff")
+		var crystal = Color("c4a3eb") if resonant else Color("e2e8ee") if silvered else Color("f0bf72") if amber else Color("abdbff")
 		crystal.a = 0.75 if active and not blink else 0.27 if active else 0.12
 		draw_rect(Rect2(x,y+3,w,21),Color("152233"))
 		draw_rect(Rect2(x+4,y+5,w-8,15),crystal)
@@ -1136,6 +1317,18 @@ func draw_platform(platform):
 		if resonant:
 			var gem = Vector2(x+w/2,y+12)
 			draw_colored_polygon(PackedVector2Array([gem+Vector2(-5,0),gem+Vector2(0,-6),gem+Vector2(5,0),gem+Vector2(0,6)]),Color("f3dfff") if active and not blink else Color("ac87cf"))
+		elif silvered:
+			var mark = Vector2(x+w/2,y+12)
+			var ink = Color("ffffff") if active and not blink else Color("a3adb6")
+			for side in [-1,1]:
+				draw_line(mark+Vector2(side*4-3,5),mark+Vector2(side*4+3,-5),ink,2.0,true)
+		elif amber:
+			var mark = Vector2(x+w/2,y+13)
+			var ink = Color("fff1cf") if active and not blink else Color("a88a5c")
+			draw_arc(mark+Vector2(0,1),5,PI,TAU,12,ink,2.0)
+			draw_line(mark+Vector2(-5,1),mark+Vector2(-7,5),ink,2.0)
+			draw_line(mark+Vector2(5,1),mark+Vector2(7,5),ink,2.0)
+			draw_line(mark+Vector2(-7,5),mark+Vector2(7,5),ink,2.0)
 	elif platform.kind == "bronze":
 		draw_rect(Rect2(x,y+8,w,22),Color("23303a"))
 		draw_rect(Rect2(x,y+5,w,7),Color("b78e5a"))
@@ -1173,6 +1366,128 @@ func draw_echo(pos, index):
 		draw_line(pos+tine+Vector2(0,-12),pos+tine+Vector2(0,9),ink,3.0,true)
 	draw_line(pos+Vector2(-8,10),pos+Vector2(8,10),ink,2.0,true)
 	draw_circle(pos+Vector2(0,15),2.5,Color("e6d4ff") if ready else ink)
+
+func draw_reflected_wave(wave, color):
+	var m = level.mirrors[wave.mirror]
+	var gap = abs(m.x - wave.origin.x)
+	if wave.radius <= gap: return
+	var ahead = 0.0 if m.face > 0 else PI
+	var limit = acos(gap / wave.radius)
+	var a1 = wrapf((Vector2(m.x, m.top) - wave.origin).angle() - ahead, -PI, PI)
+	var a2 = wrapf((Vector2(m.x, m.bottom) - wave.origin).angle() - ahead, -PI, PI)
+	var lo = max(min(a1, a2), -limit)
+	var hi = min(max(a1, a2), limit)
+	if hi > lo: draw_arc(wave.origin, wave.radius, ahead + lo, ahead + hi, 32, color, 3.0)
+
+func draw_mirror(i):
+	var m = level.mirrors[i]
+	var glow = 0.0
+	for ray in reflections:
+		if ray.mirror == i: glow = max(glow, 1.0 - (run_time - ray.time) / 0.8)
+	for side in [-4.0, 4.0]:
+		draw_line(Vector2(m.x + side, m.top - 5.0), Vector2(m.x + side * 3.0, m.top - 170.0), Color("2b3441"), 2)
+	var height = m.bottom - m.top
+	draw_rect(Rect2(m.x - 8.0, m.top, 16.0, height), Color("121a26"))
+	draw_line(Vector2(m.x - m.face * 7.0, m.top), Vector2(m.x - m.face * 7.0, m.bottom), Color("6b5a40"), 2)
+	var pane = Rect2(m.x + (1.0 if m.face > 0 else -6.0), m.top + 4.0, 5.0, height - 8.0)
+	var silver = Color("dde6ee") if settings.contrast else Color("8e9ba8")
+	draw_rect(pane, silver.lerp(Color("f4f8fb"), glow))
+	var edge = m.x + m.face * 6.5
+	draw_line(Vector2(edge, m.top + 4.0), Vector2(edge, m.bottom - 4.0), Color("e8eef3").lerp(Color.WHITE, glow), 1.5)
+	for k in range(int(height / 38.0)):
+		var y = m.top + 22.0 + k * 38.0 + (8.0 if k % 2 == 1 else 0.0)
+		draw_line(Vector2(pane.position.x, y + 6.0), Vector2(pane.end.x, y - 2.0), Color(1.0, 1.0, 1.0, 0.28 + 0.5 * glow), 1.2, true)
+	for y in [m.top, m.bottom]:
+		draw_rect(Rect2(m.x - 11.0, y - 5.0, 22.0, 9.0), Color("7d6441"))
+		draw_rect(Rect2(m.x - 10.0, y - 4.0, 20.0, 3.0), Color("c8a46a"))
+		draw_circle(Vector2(m.x, y), 2.0, Color("f0dfb6"))
+
+func draw_lift(i):
+	var l = level.lifts[i]
+	var d = deck("lift", i)
+	var glow = clamp(lifts[i].hum / LIFT_HUM, 0.0, 1.0)
+	for rail in [l.x + 10.0, l.x + l.w - 10.0]:
+		var top = Vector2(rail, l.y - l.travel - 30.0)
+		var bottom = Vector2(rail, l.y + 60.0)
+		draw_line(top, bottom, Color("1a232e"), 6)
+		draw_line(top, bottom, Color("6d6150"), 2)
+		for k in range(int((l.travel + 90.0) / 24.0)):
+			var y = l.y + 60.0 - k * 24.0
+			draw_line(Vector2(rail - 4.0, y), Vector2(rail + 4.0, y - 5.0), Color("8d7552"), 2)
+	draw_rect(Rect2(d.x, d.y + 4.0, d.w, 16.0), Color("1f2a35"))
+	draw_rect(Rect2(d.x, d.y + 2.0, d.w, 5.0), Color("8f7a5c"))
+	draw_line(Vector2(d.x, d.y), Vector2(d.x + d.w, d.y), Color("ffe2a7") if settings.contrast else Color("d8c08e"), 3)
+	var center = Vector2(d.x + d.w/2, d.y + 20.0)
+	var turn = lifts[i].offset / 13.0
+	for k in range(10):
+		var direction = Vector2.from_angle(turn + k * TAU / 10.0)
+		draw_line(center + direction * 10.0, center + direction * 15.0, Color("b08c5c"), 4)
+	draw_circle(center, 11.0, Color("2a2f33"))
+	draw_arc(center, 11.0, 0, TAU, 24, Color("c8a770").lerp(Color("fff1c8"), glow), 2)
+	for k in range(3):
+		var direction = Vector2.from_angle(turn + k * TAU / 3.0)
+		draw_line(center, center + direction * 9.0, Color("d4b57d"), 2)
+	draw_circle(center, 3.0, Color("e6ce99"))
+	if glow > 0.0:
+		draw_arc(center, 19.0 + 5.0 * sin(world_time * 18.0), 0, TAU, 32, Color(1.0, 0.9, 0.7, 0.35 * glow), 1.5)
+
+func draw_swing(i):
+	var s = level.swings[i]
+	var seat = deck("swing", i)
+	var glow = clamp(1.0 - (run_time - swings[i].struck) / 0.6, 0.0, 1.0)
+	var spread = s.w / 2.0 - 8.0
+	draw_arc(Vector2(s.x, s.y), s.length, PI/2 - SWING_LIMIT, PI/2 + SWING_LIMIT, 48, Color(0.85, 0.75, 0.55, 0.07), 1.5)
+	draw_line(Vector2(s.x - spread - 14.0, s.y), Vector2(s.x + spread + 14.0, s.y), Color("18212b"), 9)
+	draw_line(Vector2(s.x - spread - 14.0, s.y), Vector2(s.x + spread + 14.0, s.y), Color("8e754f"), 3)
+	for side in [-1.0, 1.0]:
+		var pivot = Vector2(s.x + side * spread, s.y)
+		var end = Vector2(seat.x + s.w/2 + side * spread, seat.y)
+		draw_line(pivot, end, Color("18212b"), 7)
+		draw_line(pivot + Vector2(-2, 0), end + Vector2(-2, 0), Color("8e754f"), 2)
+		draw_line(pivot + Vector2(2, 0), end + Vector2(2, 0), Color("bda375").lerp(Color("fff0c8"), glow), 2)
+		draw_circle(pivot, 8.0, Color("141e2c"))
+		draw_arc(pivot, 6.0, 0, TAU, 24, Color("d9b779"), 2)
+		draw_circle(pivot, 2.5, Color("f4e8cf"))
+	draw_rect(Rect2(seat.x, seat.y + 5.0, s.w, 13.0), Color("23303a"))
+	draw_rect(Rect2(seat.x, seat.y + 2.0, s.w, 6.0), Color("b78e5a"))
+	draw_line(Vector2(seat.x, seat.y), Vector2(seat.x + s.w, seat.y), Color("fff0be") if settings.contrast else Color("f0d8a1"), 3)
+	var hang = Vector2(seat.x + s.w/2, seat.y + 18.0)
+	var tilt = clamp(-swings[i].omega * 0.12, -0.5, 0.5)
+	var shape = PackedVector2Array()
+	for point in [Vector2(-4, 0), Vector2(4, 0), Vector2(7, 9), Vector2(10, 15), Vector2(-10, 15), Vector2(-7, 9)]:
+		shape.append(hang + point.rotated(tilt))
+	draw_colored_polygon(shape, Color("c9a067").lerp(Color("ffe7b0"), glow))
+	if glow > 0.0:
+		draw_arc(hang + Vector2(0, 8), 18.0 + 22.0 * (1.0 - glow), 0, TAU, 32, Color(1.0, 0.9, 0.7, 0.35 * glow), 2)
+
+func draw_great_bell(i):
+	var pos = level.bells[i]
+	var b = great_bells[i]
+	var angle = 0.0
+	if b.toll_at >= 0.0:
+		angle = -0.6 * sin(clamp(1.0 - (b.toll_at - run_time) / TOLL_DELAY, 0.0, 1.0) * PI * 0.5)
+	elif run_time - b.rung < 2.0:
+		var since = run_time - b.rung
+		angle = -0.6 * cos(since * 7.0) * exp(-since * 2.2)
+	var resting = b.ready_at > run_time and b.toll_at < 0.0
+	var pivot = pos + Vector2(0, -34)
+	draw_line(pivot + Vector2(-46, 0), pivot + Vector2(46, 0), Color("18212b"), 10)
+	draw_line(pivot + Vector2(-46, 0), pivot + Vector2(46, 0), Color("8e754f"), 3)
+	for side in [-1.0, 1.0]:
+		draw_circle(pivot + Vector2(side * 46.0, 0), 7.0, Color("141e2c"))
+		draw_arc(pivot + Vector2(side * 46.0, 0), 5.0, 0, TAU, 20, Color("d9b779"), 2)
+	var body = PackedVector2Array()
+	for point in [Vector2(-11, 2), Vector2(11, 2), Vector2(16, 10), Vector2(19, 26), Vector2(22, 40), Vector2(30, 52), Vector2(33, 58), Vector2(-33, 58), Vector2(-30, 52), Vector2(-22, 40), Vector2(-19, 26), Vector2(-16, 10)]:
+		body.append(pivot + point.rotated(angle))
+	draw_colored_polygon(body, Color("5f4a31") if resting else Color("8a6a3f"))
+	draw_line(pivot + Vector2(-13, 12).rotated(angle), pivot + Vector2(-24, 50).rotated(angle), Color(1.0, 0.9, 0.7, 0.25), 3)
+	draw_line(pivot + Vector2(-26, 46).rotated(angle), pivot + Vector2(26, 46).rotated(angle), Color("a88452") if resting else Color("c8a46a"), 2)
+	draw_line(pivot + Vector2(-34, 58).rotated(angle), pivot + Vector2(34, 58).rotated(angle), Color("9c8360") if resting else Color("fff0be") if settings.contrast else Color("e6c587"), 3)
+	draw_circle(pivot + Vector2(0, 52).rotated(angle * 0.4), 5.0, Color("3b3027"))
+	draw_circle(pivot, 4.0, Color("f4e8cf"))
+	var since_toll = run_time - b.rung
+	if since_toll < 0.6:
+		draw_arc(pos, 40.0 + since_toll * 90.0, 0, TAU, 48, Color(1.0, 0.85, 0.55, 0.5 * (1.0 - since_toll / 0.6)), 3)
 
 func draw_note(pos,index):
 	var y = sin(world_time*3.2+index)*6.0

@@ -14,8 +14,27 @@ static func echo_ledge(x, y, w, relay):
 	ledge.relay = relay
 	return ledge
 
+static func silver_ledge(x, y, w):
+	var ledge = p(x, y, w, "glass")
+	ledge.silver = true
+	return ledge
+
+static func amber_ledge(x, y, w):
+	var ledge = p(x, y, w, "glass")
+	ledge.amber = true
+	return ledge
+
+static func swing(x, y, length, w):
+	return {"x": float(x), "y": float(y), "length": float(length), "w": float(w)}
+
+static func lift(x, y, w, travel):
+	return {"x": float(x), "y": float(y), "w": float(w), "travel": float(travel)}
+
+static func mirror(x, top, bottom, face):
+	return {"x": float(x), "top": float(top), "bottom": float(bottom), "face": float(face)}
+
 static func make(index):
-	var d = {"name": "", "subtitle": "", "bg": "", "length": 2600.0, "height": 900.0, "spawn": Vector2(98, 548), "finish": Vector2(2440, 500), "platforms": [], "hazards": [], "obstacles": [], "notes": [], "echoes": [], "splits": [840.0, 1660.0], "par": [95.0, 150.0, 210.0], "gold": 53.0, "silver": 68.0, "bronze": 90.0, "theme": Color("f8bd67")}
+	var d = {"name": "", "subtitle": "", "bg": "", "length": 2600.0, "height": 900.0, "spawn": Vector2(98, 548), "finish": Vector2(2440, 500), "platforms": [], "hazards": [], "obstacles": [], "notes": [], "echoes": [], "swings": [], "lifts": [], "mirrors": [], "bells": [], "splits": [840.0, 1660.0], "par": [95.0, 150.0, 210.0], "gold": 53.0, "silver": 68.0, "bronze": 90.0, "theme": Color("f8bd67")}
 	match index:
 		0:
 			d.name = "THE RAIN ARCADE"
@@ -34,25 +53,28 @@ static func make(index):
 			d.subtitle = "Move with the mechanism."
 			d.bg = "res://art/pendulum.png"
 			d.theme = Color("f4b060")
-			d.platforms = [p(0,610,240),p(260,580,120),p(405,540,100,"glass"),p(525,500,150),p(690,535,115,"bronze"),p(825,485,130,"glass"),p(974,455,145),p(1135,505,110,"glass"),p(1260,545,150),p(1428,505,105,"bronze"),p(1550,460,120,"glass"),p(1685,430,145),p(1848,480,105,"glass"),p(1968,530,155),p(2138,565,135,"glass"),p(2290,590,275),echo_ledge(875,300,85,0),echo_ledge(1740,270,100,1),echo_ledge(1090,280,95,0),echo_ledge(1560,300,100,1)]
+			d.platforms = [p(0,610,240),p(260,580,120),p(405,540,100,"glass"),p(525,500,150),p(690,535,115,"bronze"),p(825,485,130,"glass"),p(974,455,145),p(1135,505,110,"glass"),p(1260,545,150),p(1428,505,105,"bronze"),p(1550,460,120,"glass"),p(1685,430,145),p(1848,480,105,"glass"),p(1968,530,155),p(2650,320,300),echo_ledge(875,300,85,0),echo_ledge(1740,270,100,1),echo_ledge(1090,280,95,0),echo_ledge(1560,300,100,1)]
 			d.echoes = [Vector2(740,440),Vector2(1540,420)]
 			d.notes = [Vector2(923,257),Vector2(1480,320),Vector2(1790,227)]
-			d.hazards = [h(590,270,120,0.0),h(1090,350,140,1.7),h(1740,170,95,2.9),h(2050,425,90,0.7)]
+			d.hazards = [h(590,270,120,0.0),h(1090,350,140,1.7),h(1740,170,95,2.9),h(2020,425,80,0.7)]
 			d.obstacles = [o("steam",323,580,0.5),o("spikes",1050,455),o("piston",1330,425,1.0),o("steam",2010,530,1.7)]
-			d.finish = Vector2(2420,546)
-			d.gold = 17.0; d.silver = 27.0; d.bronze = 40.0
+			d.swings = [swing(2320,300,240,110)]
+			d.length = 3000.0
+			d.finish = Vector2(2870,276)
+			d.gold = 21.0; d.silver = 32.0; d.bronze = 46.0
 		2:
 			d.name = "MIRROR GALLERY"
 			d.subtitle = "Let an echo open the way."
 			d.bg = "res://art/mirror.png"
 			d.theme = Color("bd9eff")
-			d.platforms = [p(0,610,280),p(298,610,125,"glass"),p(440,580,145),p(600,550,110,"glass"),p(728,520,150),p(898,520,135,"glass"),p(1050,470,140,"glass"),p(1210,490,135),p(1360,530,110,"glass"),p(1490,570,150),p(1655,535,120,"glass"),p(1794,500,120,"glass"),p(1928,525,140),p(2082,560,120,"bronze"),p(2220,590,350),echo_ledge(550,375,120,0),echo_ledge(1170,315,100,1),echo_ledge(1740,340,125,2),echo_ledge(785,340,100,0),echo_ledge(1400,300,95,1),echo_ledge(1970,320,100,2)]
+			d.platforms = [p(0,610,280),p(298,610,125,"glass"),p(440,580,145),p(600,550,110,"glass"),p(728,520,150),p(898,520,135,"glass"),p(1050,470,140,"glass"),p(1210,490,135),p(1360,530,110,"glass"),p(1490,570,150),p(1655,535,120,"glass"),p(1794,500,120,"glass"),p(1928,525,140),p(2220,590,350),echo_ledge(550,375,120,0),echo_ledge(1170,315,100,1),echo_ledge(1740,340,125,2),echo_ledge(785,340,100,0),echo_ledge(1400,300,95,1),silver_ledge(2085,450,85),silver_ledge(1975,380,85)]
 			d.echoes = [Vector2(535,485),Vector2(1050,400),Vector2(1610,470)]
 			d.notes = [Vector2(610,333),Vector2(1220,273),Vector2(1800,298)]
-			d.hazards = [h(2040,360,100,2.0)]
-			d.obstacles = [o("steam",500,580,0.2),o("piston",1320,195,0.6),o("spikes",1840,340),o("steam",2270,590,1.4)]
+			d.hazards = []
+			d.obstacles = [o("steam",500,580,0.2),o("piston",1320,195,0.6),o("spikes",1840,340)]
+			d.mirrors = [mirror(2180,250,640,-1)]
 			d.finish = Vector2(2410,546)
-			d.gold = 18.0; d.silver = 29.0; d.bronze = 43.0
+			d.gold = 20.0; d.silver = 31.0; d.bronze = 45.0
 		3:
 			d.name = "CLOCKWORK SHAFT"
 			d.subtitle = "Climb above the storm."
@@ -60,14 +82,15 @@ static func make(index):
 			d.height = 1250.0
 			d.spawn = Vector2(95,958)
 			d.theme = Color("79deb7")
-			d.platforms = [p(0,1020,260),p(280,975,130),p(430,925,115,"glass"),p(565,870,120),p(705,820,115,"bronze"),p(840,770,120,"glass"),p(980,720,145),p(1145,670,110,"glass"),p(1270,625,140),p(1425,575,115,"bronze"),p(1560,525,130,"glass"),p(1710,475,140),p(1870,435,110,"glass"),p(2000,390,125),p(2145,355,115,"glass"),p(2280,325,280),echo_ledge(910,565,95,0),echo_ledge(1630,340,90,1),echo_ledge(1120,540,100,0),echo_ledge(1840,315,100,1)]
+			d.platforms = [p(0,1020,260),p(280,975,130),p(430,925,115,"glass"),p(565,870,120),p(705,820,115,"bronze"),p(840,770,120,"glass"),p(980,720,145),p(1145,670,110,"glass"),p(1270,625,140),p(1425,575,115,"bronze"),p(1560,525,130,"glass"),p(1710,475,140),p(1870,435,110,"glass"),p(2000,390,125),p(2290,150,270),echo_ledge(910,565,95,0),echo_ledge(1630,340,90,1),echo_ledge(1120,540,100,0),echo_ledge(1840,315,100,1)]
 			d.echoes = [Vector2(770,715),Vector2(1500,475)]
 			d.notes = [Vector2(960,523),Vector2(1480,395),Vector2(1680,298)]
 			d.hazards = [h(1790,410,120,1.8)]
 			d.obstacles = [o("steam",625,870,0.8),o("piston",1130,435,0.5),o("spikes",1745,475),o("steam",2060,390,1.7)]
-			d.finish = Vector2(2420,280)
+			d.lifts = [lift(2150,560,100,330)]
+			d.finish = Vector2(2440,106)
 			d.splits = [900.0, 1700.0]
-			d.gold = 18.0; d.silver = 29.0; d.bronze = 43.0
+			d.gold = 20.0; d.silver = 31.0; d.bronze = 45.0
 		4:
 			d.name = "THE GREAT BELFRY"
 			d.subtitle = "One final chord."
@@ -75,11 +98,13 @@ static func make(index):
 			d.height = 1050.0
 			d.spawn = Vector2(95,788)
 			d.theme = Color("ffe3a1")
-			d.platforms = [p(0,850,240),p(260,810,110,"glass"),p(390,765,130),p(540,720,100,"bronze"),p(660,680,120,"glass"),p(800,645,145),p(962,610,110,"glass"),p(1095,575,130),p(1245,540,105,"bronze"),p(1368,505,115,"glass"),p(1500,465,120),p(1638,430,115,"glass"),p(1772,400,125),p(1915,365,110,"glass"),p(2042,330,110,"bronze"),p(2170,300,130,"glass"),p(2315,270,245),echo_ledge(730,450,100,0),echo_ledge(1540,280,100,1),echo_ledge(950,430,95,0),echo_ledge(1750,260,100,1),echo_ledge(2200,130,100,2)]
+			d.platforms = [p(0,850,240),p(260,810,110,"glass"),p(390,765,130),p(540,720,100,"bronze"),p(660,680,120,"glass"),p(800,645,145),p(962,610,110,"glass"),p(1095,575,130),p(1245,540,105,"bronze"),p(1368,505,115,"glass"),p(1500,465,120),p(1638,430,115,"glass"),p(1772,400,125),p(1915,365,110,"glass"),p(2042,330,110,"bronze"),p(2175,330,125),amber_ledge(2420,300,60),amber_ledge(2600,255,60),amber_ledge(2780,210,60),p(2960,165,80),echo_ledge(730,450,100,0),echo_ledge(1540,280,100,1),echo_ledge(950,430,95,0),echo_ledge(1750,260,100,1),echo_ledge(2200,130,100,2)]
 			d.echoes = [Vector2(660,605),Vector2(1430,450),Vector2(2060,245)]
 			d.notes = [Vector2(790,408),Vector2(1570,238),Vector2(2250,88)]
 			d.hazards = [h(850,515,110,0.3),h(1730,235,110,2.2),h(2220,225,90,3.1)]
-			d.obstacles = [o("steam",730,450,0.2),o("piston",1180,470,1.2),o("spikes",1620,280),o("steam",2350,270,1.7)]
-			d.finish = Vector2(2440,226)
-			d.gold = 17.0; d.silver = 28.0; d.bronze = 42.0
+			d.obstacles = [o("steam",730,450,0.2),o("piston",1180,470,1.2),o("spikes",1620,280)]
+			d.bells = [Vector2(2440,170),Vector2(2700,110)]
+			d.length = 3050.0
+			d.finish = Vector2(3005,121)
+			d.gold = 21.0; d.silver = 32.0; d.bronze = 46.0
 	return d
