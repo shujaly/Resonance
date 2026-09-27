@@ -27,11 +27,7 @@ Ring your handbell to turn nearby glass ledges solid for a few seconds, use bron
 | **Clockwork Shaft: the lift** | **Great Belfry: the great bells** |
 | ![Riding a lift as it climbs to the ring of the bell](screenshots/lift.png) | ![The second great bell tolls and lights the amber bridge](screenshots/belfry.png) |
 
-## Play
-
-The easiest way is to download `OneMoreBell-Resonance-Setup.exe` from the [Releases](https://github.com/shujaly/Resonance/releases) page and run it. It installs the game for your account (no administrator access needed), adds a Start menu shortcut and an uninstaller, and offers to launch the game. Nothing else is required. Because the installer is not code-signed, Windows may show "Windows protected your PC" the first time; choose **More info → Run anyway**.
-
-### Play from source
+## Play from source
 
 On an x64 Windows 10/11 PC, extract the complete game folder and double-click [`PLAY.cmd`](PLAY.cmd). It checks Windows, PowerShell, the game files, and the standard **Godot 4.7.2** engine before importing assets and launching. The first import may take a moment.
 
@@ -76,13 +72,6 @@ Swings, lifts and great bells answer your handbell and each other's tolls, but n
 The five courses can be replayed individually. Each keeps a best time and a separate all-notes time. Custom bell, glass, or movement-speed settings are available, but runs using them do not set timed records. Saves and settings are stored in Godot’s `user://one_more_bell_resonance.cfg`, outside the project folder. The revised routes use a separate record set, so older times and ghosts do not compete against a changed course. Your settings and completed courses remain; the old records are retained in the save file.
 
 The game supports windowed, fullscreen, and borderless modes, with resolutions up to 2560 × 1440. Parallax makes distant scenery move more slowly than the playable course to give the tower depth; it can be disabled in Settings.
-
-## Building a release
-
-The release is a single installer built in two steps. It needs the Godot 4.7.2 Windows export template (`windows_release_x86_64.exe` in `%APPDATA%\Godot\export_templates\4.7.2.stable`) and [Inno Setup 6](https://jrsoftware.org/isinfo.php).
-
-1. Export the game as one self-contained executable using the **Windows** preset in [`export_presets.cfg`](export_presets.cfg): `godot --headless --path . --export-release "Windows" exports/windows/OneMoreBell-Resonance.exe`. All art, audio and code are packed inside it; `tools/` and `screenshots/` are left out.
-2. Compile [`installer.iss`](installer.iss) with `ISCC.exe installer.iss`. This writes `exports/OneMoreBell-Resonance-Setup.exe` (about 38 MB), the only file to attach to a release. Bump `AppVersion` in `installer.iss` for each release; the fixed `AppId` lets a new version upgrade an old one in place.
 
 ## Tests
 
