@@ -32,6 +32,13 @@ const ACTION_NAMES = ["Move left", "Move right", "Jump", "Ring bell"]
 const DEFAULT_KEYS = [KEY_A, KEY_D, KEY_SPACE, KEY_J]
 const NAMES = ["Bellkeeper", "Clockwork", "Moth", "Lantern"]
 const RESOLUTIONS = [Vector2i(1280,720), Vector2i(1600,900), Vector2i(1920,1080), Vector2i(2560,1440)]
+const MECHANISM_TIPS = [
+	{},
+	{"start": 1860.0, "end": 2520.0, "title": "SWING", "line1": "Hint: Use leftshift to ring the bell", "line2": ""},
+	{"start": 1740.0, "end": 2250.0, "title": "MIRROR", "line1": "Ring toward the mirror. Its reflection", "line2": "lights the silver ledges above."},
+	{"start": 1860.0, "end": 2310.0, "title": "LIFT", "line1": "Ring near the gear to raise the lift.", "line2": "Ring again to keep it climbing."},
+	{"start": 2110.0, "end": 2820.0, "title": "GREAT BELLS", "line1": "Ring the first bell and wait for its toll.", "line2": "The toll lights amber glass and wakes the next."}
+]
 
 var state = "menu"
 var previous_state = "menu"
@@ -97,6 +104,7 @@ var selected_level = 0
 var settings_page = 0
 var story_mode = false
 var cinematic_time = 0.0
+var swing_hint_started = -1.0
 
 func _ready():
 	rng.randomize()
@@ -220,6 +228,7 @@ func start_level(i):
 	notes_taken = [false, false, false]
 	waves.clear(); delayed_waves.clear(); particles.clear()
 	run_time = 0.0; world_time = 0.0
+	swing_hint_started = -1.0
 	velocity = Vector2.ZERO; ring_cooldown = 0.0; reject_anim = 0.0; ring_anim = 0.0; invulnerable = 0.0
 	grounded = false; coyote = 0.0; jump_buffer = 0.0; jump_held = false
 	reset_character_motion()
@@ -477,6 +486,8 @@ func _physics_process(delta):
 
 func update_game(delta):
 	run_time += delta
+	if level_index == 1 and swing_hint_started < 0.0 and player.x >= 1860.0:
+		swing_hint_started = run_time
 	var was_charging = ring_cooldown > 0.0
 	ring_cooldown = max(0.0, ring_cooldown - delta)
 	if was_charging and ring_cooldown <= 0.0:
@@ -707,10 +718,22 @@ func circle_overlaps_rect(center, radius, rect):
 	return center.distance_squared_to(nearest) < radius * radius
 
 func obstacle_active(obstacle):
-	return fposmod(run_time + obstacle.phase, 2.8) < 0.72
+	return fposmod(run_time + obstacle.phase, 2.8) < 1.25
 
 func steam_pressure(obstacle):
 	return clamp((fposmod(run_time+obstacle.phase,2.8)-1.95)/0.85,0.0,1.0)
+
+func steam_intensity(obstacle):
+	var phase = fposmod(run_time + obstacle.phase, 2.8)
+	if phase < 0.2: return smoothstep(0.0, 0.2, phase)
+	if phase < 0.5: return 1.0
+	if phase < 1.25: return lerpf(1.0, 0.16, smoothstep(0.5, 1.25, phase))
+	if phase < 1.85: return 0.16
+	return 0.0
+
+func steam_opacity(obstacle):
+	var phase = fposmod(run_time + obstacle.phase, 2.8)
+	return 1.0 - smoothstep(1.25, 1.85, phase) if phase < 1.85 else 1.0
 
 func piston_pos(obstacle):
 	var phase = fposmod(run_time + obstacle.phase, 3.2) / 3.2
@@ -721,7 +744,9 @@ func obstacle_hits_player(obstacle, at):
 	var hurtbox = player_hurtbox(at)
 	match obstacle.kind:
 		"steam":
-			return obstacle_active(obstacle) and hurtbox.intersects(Rect2(obstacle.x-23.0,obstacle.y-85.0,46.0,87.0))
+			var intensity = steam_intensity(obstacle)
+			var height = 85.0 * intensity
+			return obstacle_active(obstacle) and intensity >= 0.08 and hurtbox.intersects(Rect2(obstacle.x-23.0,obstacle.y-height,46.0,height+2.0))
 		"piston":
 			var head = piston_pos(obstacle)
 			return hurtbox.intersects(Rect2(head.x-27.0,head.y-15.0,54.0,40.0))
@@ -747,6 +772,7 @@ func respawn():
 	player = level.spawn
 	facing = 1.0
 	run_time = 0.0
+	swing_hint_started = -1.0
 	split_index = 0
 	section_times.clear()
 	notes_taken = [false, false, false]
@@ -976,7 +1002,7 @@ func show_help():
 		["GLASS", "Ring nearby. Lit glass cannot be refreshed; blinking means it is fading.", Color("9ae8f4")],
 		["BRONZE", "Launches you upward and restores the bell immediately.", Color("ffd18c")],
 		["ECHO", "A delayed pulse opens the violet, diamond-marked shortcut ledges.", Color("d2aaff")],
-		["SWING", "Ring as it moves away from you, or face its motion while riding, to build height.", Color("f0d8a1")],
+		["SWING", "On the seat, face right and ring with Left Shift on the left swing; coast right.", Color("f0d8a1")],
 		["MIRROR", "Silvered ledges only answer a ring reflected off the mirror.", Color("e2e8ee")],
 		["LIFT", "Climbs while it hears the bell and sinks when the tower falls quiet.", Color("d8c08e")],
 		["GREAT BELL", "Tolls after a moment, lights amber glass, and can wake the next bell.", Color("f0bf72")]]
@@ -1096,13 +1122,13 @@ func show_settings():
 				var row = settings_row(vbox,ACTION_NAMES[i])
 				var action_index = i
 				var button = Button.new()
-				button.text = OS.get_keycode_string(keys[i]) + "   ·   CHANGE"
+				button.text = OS.get_keycode_string(keys[i]) + (" / Shift" if i == 3 else "") + "   ·   CHANGE"
 				button.custom_minimum_size = Vector2(260,36)
 				button.add_theme_stylebox_override("normal",style(Color("131e2b"),Color("746952"),3))
 				button.add_theme_stylebox_override("hover",style(Color("222d38"),Color("c9ad7b"),3))
 				row.add_child(button)
 				button.pressed.connect(func(): capturing = action_index; button.text = "PRESS A KEY · ESC CANCELS")
-			make_label(vbox,"Arrow keys, Shift and gamepad remain available.",Vector2.ZERO,16,Color("ab9a7e"),730)
+			make_label(vbox,"Arrow keys and gamepad remain available.",Vector2.ZERO,16,Color("ab9a7e"),730)
 	make_button(ui, "←  BACK", Vector2(81,637), Vector2(191,50), func(): leave_settings())
 
 func leave_settings():
@@ -1233,6 +1259,7 @@ func _draw():
 		draw_world()
 		draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 		if state in ["play","pause"]: draw_hud()
+		if state == "play": draw_mechanism_tip()
 	if state == "pause" or state == "settings":
 		draw_rect(Rect2(0,0,VIEW.x,VIEW.y), Color(0.01,0.018,0.045,0.53))
 	if state == "results": draw_rect(Rect2(0,0,VIEW.x,VIEW.y), Color(0.01,0.02,0.055,0.75))
@@ -1543,7 +1570,7 @@ func draw_escapement_bob(center, phase):
 func draw_obstacle(obstacle):
 	var pos = Vector2(obstacle.x,obstacle.y)
 	if obstacle.kind == "steam":
-		HazardArt.steam(self,pos,level_index%3,world_time,steam_pressure(obstacle),obstacle_active(obstacle),settings.contrast)
+		HazardArt.steam(self,pos,level_index%3,world_time,steam_pressure(obstacle),obstacle_active(obstacle),settings.contrast,steam_intensity(obstacle),steam_opacity(obstacle))
 	elif obstacle.kind == "piston":
 		var head = piston_pos(obstacle)
 		var warning = fposmod(run_time+obstacle.phase,3.2) > 2.6
@@ -1583,6 +1610,26 @@ func draw_hud():
 	draw_line(Vector2(42,68),Vector2(48,68),Color("d9c395"),2)
 	draw_text(format_time(run_time),Vector2(73,91),25,Color(0.02,0.03,0.05,0.9))
 	draw_text(format_time(run_time),Vector2(72,90),25,Color("f4ead3"))
+
+func draw_mechanism_tip():
+	var tip = MECHANISM_TIPS[level_index]
+	if level_index == 1:
+		if swing_hint_started < 0.0: return
+		var elapsed = run_time - swing_hint_started
+		if elapsed >= 4.5: return
+		var alpha = minf(minf(1.0, elapsed / 0.45), (4.5 - elapsed) / 1.0) * 0.8
+		var width = UI_FONT.get_string_size(tip.line1, HORIZONTAL_ALIGNMENT_LEFT, -1, 21).x
+		var origin = Vector2((VIEW.x - width) / 2.0, 585)
+		draw_text(tip.line1, origin + Vector2(1, 2), 21, Color(0.01, 0.02, 0.04, alpha))
+		draw_text(tip.line1, origin, 21, Color(1.0, 0.94, 0.81, alpha))
+		return
+	if tip.is_empty() or player.x < tip.start or player.x > tip.end: return
+	var box = Rect2(750, 22, 500, 112)
+	draw_rect(box, Color(0.025, 0.045, 0.075, 0.88))
+	draw_rect(box, level.theme, false, 2.0)
+	draw_text(tip.title, Vector2(771, 52), 21, level.theme)
+	draw_text(tip.line1, Vector2(771, 86), 18, Color("f4ead3"))
+	draw_text(tip.line2, Vector2(771, 113), 18, Color("f4ead3"))
 
 func draw_text(message, pos, size=16, color=Color.WHITE):
 	draw_string(UI_FONT,pos,message,HORIZONTAL_ALIGNMENT_LEFT,-1,size,color)

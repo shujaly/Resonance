@@ -40,6 +40,14 @@ func run_tests():
 	check(game.steam_pressure(steam) > 0.5 and not game.obstacle_hits_player(steam,Vector2(100,250)), "steam warning is visible but nonlethal")
 	game.run_time = 0.1
 	check(game.obstacle_hits_player(steam,Vector2(100,250)), "steam burst covers visible plume")
+	game.run_time = 2.65
+	check(game.steam_intensity(steam) == 0.0 and not game.obstacle_hits_player(steam,Vector2(100,290)), "pipe shakes before any water appears")
+	game.run_time = 0.5
+	var full_spray = game.steam_intensity(steam)
+	game.run_time = 1.05
+	check(game.steam_intensity(steam) < full_spray and game.steam_opacity(steam) == 1.0, "spray shrinks before fading")
+	game.run_time = 1.55
+	check(game.steam_intensity(steam) > 0.0 and game.steam_opacity(steam) < 1.0 and not game.obstacle_hits_player(steam,Vector2(100,290)), "remaining spray fades safely")
 	var piston = {"kind":"piston","x":100.0,"y":300.0,"phase":0.0}
 	game.run_time = 0.0
 	check(game.obstacle_hits_player(piston,Vector2(138,300)), "piston tooth edge registers contact")

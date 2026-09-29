@@ -60,7 +60,7 @@ Lit ledges cannot be refreshed. Watch for the final blink, and commit when the n
 
 ## Mechanisms
 
-- **Swing (Pendulum Hall).** The seat hangs on a pendulum whose period follows T = 2π√(L/g). A ring pushes it away from you; while riding, it pushes the way you face. Ring in time with its motion to build height, the way you pump a playground swing. Ring against it and it slows down.
+- **Swing (Pendulum Hall).** Jump onto the seat and face right. Press Left Shift to ring as the seat swings left, then let it travel right without ringing. Repeat to build enough height to jump to the far platform. The seat hangs on a pendulum whose period follows T = 2π√(L/g); a ring pushes it in the direction you face while riding.
 - **Mirror (Mirror Gallery).** The mirror is a solid wall that reflects your ring. Silvered ledges, marked with two slashes, ignore the handbell and only light when a reflection reaches them. The angle of incidence equals the angle of reflection, and faint lines show the path when it works.
 - **Lift (Clockwork Shaft).** A lift climbs while the sound of your bell reaches its gear, then sinks slowly once the tower falls quiet. Ring again as it climbs to keep it going.
 - **Great bells (Great Belfry).** A great bell swings back for a moment, then tolls. The toll lights amber, bell-marked glass (which ignores the handbell) and can ring the next great bell along. A bell that has just tolled needs a short rest.

@@ -64,9 +64,9 @@ static func spikes(canvas, origin, style=0, contrast=false):
 		canvas.draw_line(origin+Vector2(x+3,-2),origin+Vector2(x+width-2,-2),Color("b29a73"),2.0,true)
 	canvas.draw_line(origin+Vector2(-25,0),origin+Vector2(27,0),Color("272f31"),2.0,true)
 
-static func steam(canvas, origin, style, clock, pressure, active, contrast=false):
+static func steam(canvas, origin, style, clock, pressure, active, contrast=false, intensity=1.0, opacity=1.0):
 	var rattle = sin(clock*52.0+origin.x)*2.0*pressure
-	var recoil = sin(clock*70.0)*0.55 if active else 0.0
+	var recoil = sin(clock*70.0)*0.55*intensity if active else 0.0
 	var vent = origin+Vector2(rattle,recoil)
 	var left = -1.0 if style==1 else 1.0
 	if style==0:
@@ -116,34 +116,32 @@ static func steam(canvas, origin, style, clock, pressure, active, contrast=false
 		for side in [-1,1]:
 			var crack = vent+Vector2(side*21,-4)
 			canvas.draw_polyline(PackedVector2Array([crack+Vector2(side*1,-3),crack+Vector2(side*3,-7),crack+Vector2(side*2,-10)]),Color(0.85,0.76,0.59,pressure*0.65),1.0,true)
-	if active:
-		plume(canvas,origin,clock,contrast)
-	elif pressure>0:
-		for i in range(5):
-			var rise = fposmod(clock*(18+pressure*27)+i*9,38.0)
-			var x = sin(clock*4+i*2)*5+(-7.0 if i%2==0 else 7.0)
-			canvas.draw_circle(vent+Vector2(x,-12-rise),2.8+rise*0.045,Color(0.79,0.84,0.8,(1.0-rise/45.0)*(0.12+pressure*0.20)))
+	if intensity>0.0:
+		plume(canvas,origin,clock,contrast,intensity,opacity)
 
-static func plume(canvas, origin, clock, contrast):
-	for layer in range(3):
+static func plume(canvas, origin, clock, contrast, intensity, opacity):
+	if intensity < 0.08: return
+	for stream in range(3):
+		var center_x = (stream-1)*13.0
+		var stream_height = 85.0 if stream==1 else 78.0
 		var vertices = PackedVector2Array()
 		for side in [-1,1]:
 			for j in range(13):
 				var t = (j if side==-1 else 12-j)/12.0
 				var cap = 1.0-pow(max(0.0,(t-0.72)/0.28),2.0)*0.35
-				var width = (21.0-layer*5.0+sin(t*13.0-clock*19.0+layer)*1.6)*cap
-				vertices.append(origin+Vector2(side*width,-t*(85.0-layer*2.5)+(3.0 if t==1.0 else 0.0)))
-		var cap_y = -85.0+layer*2.5
-		vertices.insert(13,origin+Vector2(0,cap_y))
-		canvas.draw_colored_polygon(vertices,Color(0.77,0.87,0.85,(0.34 if contrast else 0.21)-layer*0.025))
+				var width = (8.0+sin(t*13.0-clock*19.0+stream)*1.0)*cap*intensity
+				var drift = sin(t*8.0-clock*9.0+stream)*1.3*t*intensity
+				vertices.append(origin+Vector2(center_x+drift+side*width,(-t*stream_height+(3.0 if t==1.0 else 0.0))*intensity))
+		vertices.insert(13,origin+Vector2(center_x,-stream_height*intensity))
+		canvas.draw_colored_polygon(vertices,Color(0.77,0.87,0.85,(0.30 if contrast else 0.19)*intensity*opacity))
 	for i in range(9):
-		var rise = fposmod(clock*150.0+i*9.5,73.0)
-		var radius = 3.5+rise*0.035
+		var rise = fposmod(clock*150.0+i*9.5,73.0)*intensity
+		var radius = (3.5+rise*0.035)*intensity
 		var x = sin(clock*7.0+i*2.7)*(14.0-radius)
-		canvas.draw_circle(origin+Vector2(x,-7-rise),radius,Color(0.92,0.96,0.91,0.15*(1.0-rise/100.0)))
+		canvas.draw_circle(origin+Vector2(x*intensity,-7-rise),radius,Color(0.92,0.96,0.91,0.15*(1.0-rise/100.0)*intensity*opacity))
 	for i in range(3):
 		var streak = PackedVector2Array()
 		for j in range(9):
-			var y = -5.0-j*9.0
-			streak.append(origin+Vector2((i-1)*11.0+sin(j*0.8-clock*15+i)*2.2,y))
-		canvas.draw_polyline(streak,Color(0.92,0.96,0.91,0.26 if contrast else 0.16),1.4,true)
+			var y = (-5.0-j*9.0)*intensity
+			streak.append(origin+Vector2(((i-1)*11.0+sin(j*0.8-clock*15+i)*2.2)*intensity,y))
+		canvas.draw_polyline(streak,Color(0.92,0.96,0.91,(0.26 if contrast else 0.16)*intensity*opacity),1.4*intensity,true)
